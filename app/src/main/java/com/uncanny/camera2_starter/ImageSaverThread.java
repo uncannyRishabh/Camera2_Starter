@@ -23,6 +23,7 @@ public class ImageSaverThread implements Runnable {
     private final String cameraId;
     private final ContentResolver contentResolver;
     private Uri uri;
+    public static Uri staticUri;
     private final Context context;
 
     public ImageSaverThread(Context context, Image image, String cameraId, ContentResolver contentResolver) {
@@ -56,6 +57,8 @@ public class ImageSaverThread implements Runnable {
 
             Uri external = MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
             uri = contentResolver.insert(external, values);
+
+            staticUri = uri;
         }
 
         ByteBuffer buffer = mImage.getPlanes()[0].getBuffer();

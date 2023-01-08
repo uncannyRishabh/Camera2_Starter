@@ -9,6 +9,7 @@ import androidx.core.os.HandlerCompat;
 
 import android.Manifest;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.ImageFormat;
 import android.graphics.SurfaceTexture;
@@ -24,6 +25,7 @@ import android.media.ImageReader;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.provider.MediaStore;
 import android.util.Log;
 import android.util.SparseIntArray;
 import android.view.Surface;
@@ -73,7 +75,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private Handler mHandler = new Handler();
     private HandlerThread mBackgroundThread;
 
-    private boolean resumed, hasSurface;
+    private boolean resumed = false, hasSurface = false;
     private List<Surface> surfaceList = new ArrayList<>();
 
     @Override
@@ -121,7 +123,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
     }
 
-        private void requestPermissions() {
+    private void requestPermissions() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED ||
                 ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED ||
                 ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
@@ -352,7 +354,18 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         if (id == R.id.capture) {
             captureImage();
         } else if (id == R.id.thumbnail) {
-            displayLatestImage();
+            if(ImageSaverThread.staticUri == null){
+                Intent i = new Intent(Intent.ACTION_VIEW);
+                i.setDataAndType(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image/jpeg");
+                startActivity(i);
+            }
+            else{
+                Log.e(TAG, "onClick: uri : "+ImageSaverThread.staticUri);
+                final String GALLERY_REVIEW = "com.android.camera.action.REVIEW";
+                Intent i = new Intent(GALLERY_REVIEW);
+                i.setData(ImageSaverThread.staticUri);
+                startActivity(i);
+            }
         }
     }
 
@@ -360,14 +373,15 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     protected void onResume() {
         super.onResume();
         resumed = true;
-        displayLatestImage();
         startBackgroundThread();
         openCamera();
+        displayLatestImage();
     }
 
     @Override
     protected void onPause() {
         super.onPause();
+        resumed = false;
         closeCamera();
         stopBackgroundThread();
     }
