@@ -22,6 +22,7 @@ import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.params.OutputConfiguration;
 import android.hardware.camera2.params.SessionConfiguration;
 import android.media.ImageReader;
+import android.media.MediaActionSound;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -71,6 +72,8 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private CaptureRequest.Builder previewCaptureRequestBuilder;
     private ImageReader imageReader;
 
+    private MediaActionSound sound = new MediaActionSound();
+
     private Handler cameraHandler;
     private Handler mHandler = new Handler();
     private HandlerThread mBackgroundThread;
@@ -86,16 +89,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         capture = findViewById(R.id.capture);
         thumbPreview = findViewById(R.id.thumbnail);
         previewView = findViewById(R.id.preview);
-
-        capture.setOnClickListener(this);
-        thumbPreview.setOnClickListener(this);
-
-        requestPermissions();
-    }
-
-    @Override
-    protected void onPostCreate(@Nullable Bundle savedInstanceState) {
-        super.onPostCreate(savedInstanceState);
         previewView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
             @Override
             public void onSurfaceTextureAvailable(@NonNull SurfaceTexture surface, int width, int height) {
@@ -121,6 +114,10 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             }
         });
 
+        capture.setOnClickListener(this);
+        thumbPreview.setOnClickListener(this);
+
+        requestPermissions();
     }
 
     private void requestPermissions() {
@@ -166,6 +163,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             imageReader = ImageReader.newInstance(4000, 3000, ImageFormat.JPEG, 5);
             imageReader.setOnImageAvailableListener(snapshotImageCallback, cameraHandler);
 
+            surfaceList.clear();
             surfaceList.add(new Surface(stPreview));
             surfaceList.add(imageReader.getSurface());
 
@@ -193,6 +191,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
             cameraCaptureSession.capture(captureRequestBuilder.build(), null, mHandler);
 
+            sound.play(MediaActionSound.SHUTTER_CLICK);
         } catch (CameraAccessException e) {
             e.printStackTrace();
         }
@@ -382,8 +381,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     protected void onPause() {
         super.onPause();
         resumed = false;
-        closeCamera();
-        stopBackgroundThread();
     }
 
     @Override
