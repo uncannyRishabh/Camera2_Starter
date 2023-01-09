@@ -7,7 +7,7 @@
     android:background="@color/black"
     tools:context=".MainActivity">
 
-    <com.uncanny.camera2_starter.AutoFitPreviewView
+    <com.uncanny.camera2_video.AutoFitPreviewView
         android:id="@+id/preview"
         android:layout_width="match_parent"
         android:layout_height="0dp"
@@ -30,7 +30,7 @@
         />
 
     <com.google.android.material.imageview.ShapeableImageView
-        android:id="@+id/thumbnail"
+        android:id="@+id/thumbnail_snapshot"
         android:layout_width="60dp"
         android:layout_height="60dp"
         app:layout_constraintStart_toStartOf="parent"
@@ -48,5 +48,28 @@
         app:shapeAppearanceOverlay="@style/circularImageView"
         app:strokeColor="@color/white"
         app:strokeWidth="2.5dp" />
+
+    <com.google.android.material.imageview.ShapeableImageView
+        android:id="@+id/pause_resume"
+        android:layout_width="60dp"
+        android:layout_height="60dp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toEndOf="@+id/capture"
+        app:layout_constraintTop_toTopOf="@id/capture"
+        app:layout_constraintBottom_toBottomOf="parent"
+        android:layout_marginBottom="120dp"
+        android:layout_centerVertical="true"
+        android:layout_marginEnd="48dp"
+        android:adjustViewBounds="true"
+        android:clickable="true"
+        android:focusable="true"
+        android:padding="1dp"
+        android:scaleType="center"
+        android:src="@drawable/ic_round_pause_24"
+        android:visibility="invisible"
+        app:shapeAppearanceOverlay="@style/circularImageView"
+        app:strokeColor="@color/white"
+        app:strokeWidth="2.5dp" />
+
 
 </androidx.constraintlayout.widget.ConstraintLayout>

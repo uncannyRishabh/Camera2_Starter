@@ -1,4 +1,4 @@
-package com.uncanny.camera2_starter;
+package com.uncanny.camera2_video;
 
 import org.junit.Test;
 

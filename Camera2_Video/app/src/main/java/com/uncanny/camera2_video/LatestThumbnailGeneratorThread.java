@@ -1,4 +1,4 @@
-package com.uncanny.camera2_starter;
+package com.uncanny.camera2_video;
 
 import android.content.Context;
 import android.database.Cursor;

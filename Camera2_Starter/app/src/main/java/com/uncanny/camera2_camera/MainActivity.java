@@ -1,7 +1,6 @@
-package com.uncanny.camera2_starter;
+package com.uncanny.camera2_camera;
 
 import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
@@ -133,7 +132,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if(requestCode == REQUEST_CAMERA_PERMISSION) {
-            for(int i=0; i<permissions.length;i++){
+            for(int i=0; i<permissions.length-1;i++){
                 if(grantResults[i] != PackageManager.PERMISSION_GRANTED) {
                     Toast.makeText(this, "Grant Permission to continue", Toast.LENGTH_SHORT).show();
                     finishAffinity();
