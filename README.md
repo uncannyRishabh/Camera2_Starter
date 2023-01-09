@@ -1,5 +1,5 @@
 # Camera2_Starter
-Camera app made using Camera2 api, with ZSL like shutter lag, uses Rx for async work, uses latest APIs and best practices, while supporting android 7 and up.
-  
+Contains set of camera2 api starter projects in Java(too lazy to learn kotlin). The apps use RxJava/RxAndroid, latest APIs to get started in minimal amount of code.  
+
 ## Parent Codebase
 ### [Camx](https://github.com/uncannyRishabh/camx)
