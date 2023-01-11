@@ -43,7 +43,6 @@ import com.google.android.material.imageview.ShapeableImageView;
 import java.io.File;
 import java.io.IOException;
 import java.util.Arrays;
-import java.util.Collections;
 
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers;
 import io.reactivex.rxjava3.core.Completable;
@@ -88,7 +87,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
     private File videoFile;
     private boolean resumed = false, hasSurface = false;
-    //    private List<Surface> surfaceList = new ArrayList<>();
     private boolean shouldDeleteEmptyFile;
     private boolean isVRecording = true;
     private Uri fileUri;
@@ -167,7 +165,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             previewView.measure(1920, 1080);
             previewView.setAspectRatio(1080,1920);
             stPreview.setDefaultBufferSize(1920, 1080);
-//            stPreview.setDefaultBufferSize(1080, 1920);
 
             //set capture resolution
             imageReader = ImageReader.newInstance(1920, 1080, ImageFormat.JPEG, 5);
@@ -177,7 +174,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED ||
                         ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                     requestPermissions();
-                    return;
                 }
                 cameraManager.openCamera("0", cameraDeviceStateCallback, cameraHandler);
             } catch(CameraAccessException e) {
@@ -193,43 +189,61 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         if(!resumed || !hasSurface) return;
 
         try {
+            prepareMediaRecorder();
+
             previewCaptureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
+            previewView.getSurfaceTexture().setDefaultBufferSize(1920, 1080);
             previewSurface = new Surface(previewView.getSurfaceTexture());
+
+            Surface recordSurface = mMediaRecorder.getSurface();
+            previewCaptureRequestBuilder.addTarget(recordSurface);
+
             previewCaptureRequestBuilder.addTarget(previewSurface);
 
             previewCaptureRequestBuilder.set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE
                     ,CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON);
 
-//            previewCaptureRequest.set(CaptureRequest.CONTROL_AWB_MODE,CaptureRequest.CONTROL_AWB_MODE_OFF);
-//            camDeviceCaptureRequest.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,new Range<>(24,60));
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                OutputConfiguration previewConfiguration = new OutputConfiguration(previewSurface);
+                OutputConfiguration recordConfiguration = new OutputConfiguration(recordSurface);
+                OutputConfiguration snapshotConfiguration = new OutputConfiguration(imageReader.getSurface());
+                SessionConfiguration sessionConfiguration = new SessionConfiguration(SessionConfiguration.SESSION_REGULAR
+                        , Arrays.asList(previewConfiguration,recordConfiguration,snapshotConfiguration)
+                        , getMainExecutor()
+                        , streamlineCaptureSessionCallback);
 
-            cameraDevice.createCaptureSession(Collections.singletonList(previewSurface)
-                    , new CameraCaptureSession.StateCallback() {
-                        @Override
-                        public void onConfigured(@NonNull CameraCaptureSession session) {
-                            cameraCaptureSession = session;
-                            try {
-                                cameraCaptureSession.setRepeatingRequest(previewCaptureRequestBuilder.build(), null,mHandler);
-                                if(isVRecording){
-                                    Log.e(TAG, "onConfigured: Preparing media Recorder");
-                                    prepareMediaRecorder();
-                                }
-                            } catch (CameraAccessException e) {
-                                e.printStackTrace();
-                            }
-                        }
-
-                        @Override
-                        public void onConfigureFailed(@NonNull CameraCaptureSession session) {
-                            Log.e(TAG, "onConfigureFailed: createVideoPreview()");
-                        }
-                    },null);
+                cameraDevice.createCaptureSession(sessionConfiguration);
+            }
+            else{
+                cameraDevice.createCaptureSession(Arrays.asList(previewSurface, recordSurface, imageReader.getSurface())
+                        ,streamlineCaptureSessionCallback,null);
+            }
         }
         catch (CameraAccessException e) {
             e.printStackTrace();
         }
 
     }
+
+    CameraCaptureSession.StateCallback streamlineCaptureSessionCallback = new CameraCaptureSession.StateCallback() {
+        @Override
+        public void onConfigured(@NonNull CameraCaptureSession session) {
+            cameraCaptureSession = session;
+            try {
+                cameraCaptureSession.setRepeatingRequest(previewCaptureRequestBuilder.build(), null,mHandler);
+                if(isVRecording){
+                    Log.e(TAG, "onConfigured: Preparing media Recorder");
+                }
+            } catch (CameraAccessException e) {
+                e.printStackTrace();
+            }
+        }
+
+        @Override
+        public void onConfigureFailed(@NonNull CameraCaptureSession session) {
+            Log.e(TAG, "onConfigureFailed: createVideoPreview()");
+        }
+    };
 
     private void prepareMediaRecorder(){
         String mVideoLocation = "//storage//emulated//0//DCIM//Camera//";
@@ -268,71 +282,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
     private void startRecording(){
         shouldDeleteEmptyFile = false;
-        try {
-            SurfaceTexture surfaceTexture = previewView.getSurfaceTexture();
-            surfaceTexture.setDefaultBufferSize(1920, 1080);
-            Surface previewSurface = new Surface(surfaceTexture); //TODO : free surface with #release
-
-            if(!isVRecording){
-
-                Log.e(TAG, "startRecording: TEST");
-                Surface recordSurface = mMediaRecorder.getSurface();
-//                previewCaptureRequest = camDevice.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
-//                previewCaptureRequest.addTarget(previewSurface);
-                previewCaptureRequestBuilder.addTarget(recordSurface);
-
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                    OutputConfiguration previewConfiguration = new OutputConfiguration(previewSurface);
-                    OutputConfiguration recordConfiguration = new OutputConfiguration(recordSurface);
-                    SessionConfiguration sessionConfiguration = new SessionConfiguration(SessionConfiguration.SESSION_REGULAR
-                            , Arrays.asList(previewConfiguration,recordConfiguration)
-                            , getMainExecutor()
-                            , new CameraCaptureSession.StateCallback() {
-                        @Override
-                        public void onConfigured(@NonNull CameraCaptureSession session) {
-                            cameraCaptureSession = session;
-                            mMediaRecorder.start();
-                            try {
-                                Log.e(TAG, "startRecording: TEST");
-                                cameraCaptureSession.setRepeatingRequest(previewCaptureRequestBuilder.build(),null, mHandler);
-                            } catch (CameraAccessException e) {
-                                e.printStackTrace();
-                            }
-                        }
-
-                        @Override
-                        public void onConfigureFailed(@NonNull CameraCaptureSession session) {
-                            Log.e(TAG, "onConfigureFailed: SessionConfiguration FAILED");
-                        }
-                    });
-
-                    cameraDevice.createCaptureSession(sessionConfiguration);
-                }
-                else {
-                    cameraDevice.createCaptureSession(Arrays.asList(previewSurface, recordSurface, imageReader.getSurface())
-                            , new CameraCaptureSession.StateCallback() {
-                                @Override
-                                public void onConfigured(CameraCaptureSession session) {
-                                    cameraCaptureSession = session;
-                                    try {
-                                        cameraCaptureSession.setRepeatingRequest(previewCaptureRequestBuilder.build(),null, mHandler);
-                                        mMediaRecorder.start();
-                                    } catch (CameraAccessException e) {
-                                        e.printStackTrace();
-                                    }
-                                }
-                                @Override
-                                public void onConfigureFailed(CameraCaptureSession session) {
-                                    Log.d(TAG, "onConfigureFailed: startRecord");
-                                }
-                            }, mHandler);
-                }
-
-            }
-        }
-        catch (IllegalStateException | CameraAccessException e){
-            e.printStackTrace();
-        }
+        mMediaRecorder.start();
     }
 
     private void captureImage() {
@@ -391,7 +341,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         public void onOpened(@NonNull CameraDevice camera) {
             cameraDevice = camera;
             createVideoPreview();
-//            runOnUiThread(() -> previewView.setAspectRatio(1080,1920));
         }
 
         @Override
@@ -406,34 +355,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         }
     };
 
-    private CameraCaptureSession.StateCallback stateCallback = new CameraCaptureSession.StateCallback() {
-        @Override
-        public void onConfigured(@NonNull CameraCaptureSession session) {
-            cameraCaptureSession = session;
-
-            try {
-                previewCaptureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
-//                previewCaptureRequestBuilder.addTarget(surfaceList.get(0));
-                previewCaptureRequestBuilder.set(CaptureRequest.JPEG_ORIENTATION, ORIENTATIONS.get(0));
-                previewCaptureRequestBuilder.set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE
-                        ,CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON);
-
-                cameraCaptureSession.setRepeatingRequest(previewCaptureRequestBuilder.build(), null, null);
-
-                prepareMediaRecorder();
-            } catch (CameraAccessException e) {
-                e.printStackTrace();
-            }
-
-        }
-
-        @Override
-        public void onConfigureFailed(@NonNull CameraCaptureSession session) {
-            Log.e(TAG, "IMAGE CAPTURE CALLBACK: onConfigureFailed: configure failed");
-        }
-    };
-
-
     private void displayLatestThumbnail() {
         LatestThumbnailGeneratorThread ltg;
         Completable.fromRunnable(ltg = new LatestThumbnailGeneratorThread(this))
@@ -445,7 +366,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 })).subscribe();
     }
 
-    public void performMediaScan(String filename, String type){
+    private void performMediaScan(String filename, String type){
         String mimeType = null;
         if(type.equals("image")) mimeType = "image/jpeg";
         else if(type.equals("video")) mimeType = "video/mp4";
@@ -516,11 +437,11 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             else {
                 Log.e(TAG, "onClick: Stop Recording");
                 mMediaRecorder.stop();
+//                prepareMediaRecorder();
                 sound.play(MediaActionSound.STOP_VIDEO_RECORDING);
                 performMediaScan(videoFile.getAbsolutePath(),"video");
                 createVideoPreview();
                 displayLatestThumbnail();
-//                mMediaRecorder.reset();
             }
         }
         else if (id == R.id.thumbnail_snapshot) {
