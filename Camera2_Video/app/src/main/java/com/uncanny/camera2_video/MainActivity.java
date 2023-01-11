@@ -24,6 +24,8 @@ import android.media.CamcorderProfile;
 import android.media.ImageReader;
 import android.media.MediaActionSound;
 import android.media.MediaRecorder;
+import android.media.MediaScannerConnection;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -40,9 +42,8 @@ import com.google.android.material.imageview.ShapeableImageView;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.List;
+import java.util.Collections;
 
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers;
 import io.reactivex.rxjava3.core.Completable;
@@ -67,6 +68,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private ShapeableImageView thumbPreview;
     private AutoFitPreviewView previewView;
 
+    private Surface previewSurface;
     private SurfaceTexture stPreview;
 
     private CameraDevice cameraDevice;
@@ -86,9 +88,10 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
     private File videoFile;
     private boolean resumed = false, hasSurface = false;
-    private List<Surface> surfaceList = new ArrayList<>();
+    //    private List<Surface> surfaceList = new ArrayList<>();
     private boolean shouldDeleteEmptyFile;
-    private boolean isVRecording;
+    private boolean isVRecording = true;
+    private Uri fileUri;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -98,30 +101,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         capture = findViewById(R.id.capture);
         thumbPreview = findViewById(R.id.thumbnail_snapshot);
         previewView = findViewById(R.id.preview);
-        previewView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
-            @Override
-            public void onSurfaceTextureAvailable(@NonNull SurfaceTexture surface, int width, int height) {
-                stPreview = surface;
-                hasSurface = true;
-                openCamera();
-            }
-
-            @Override
-            public void onSurfaceTextureSizeChanged(@NonNull SurfaceTexture surface, int width, int height) {
-
-            }
-
-            @Override
-            public boolean onSurfaceTextureDestroyed(@NonNull SurfaceTexture surface) {
-                hasSurface = false;
-                return false;
-            }
-
-            @Override
-            public void onSurfaceTextureUpdated(@NonNull SurfaceTexture surface) {
-
-            }
-        });
 
         capture.setOnClickListener(this);
         thumbPreview.setOnClickListener(this);
@@ -153,7 +132,30 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
     }
 
+    private TextureView.SurfaceTextureListener mSurfaceTextureListener = new TextureView.SurfaceTextureListener() {
+        @Override
+        public void onSurfaceTextureAvailable(@NonNull SurfaceTexture surface, int width, int height) {
+            stPreview = surface;
+            hasSurface = true;
+            openCamera();
+        }
 
+        @Override
+        public void onSurfaceTextureSizeChanged(@NonNull SurfaceTexture surface, int width, int height) {
+
+        }
+
+        @Override
+        public boolean onSurfaceTextureDestroyed(@NonNull SurfaceTexture surface) {
+            hasSurface = false;
+            return false;
+        }
+
+        @Override
+        public void onSurfaceTextureUpdated(@NonNull SurfaceTexture surface) {
+
+        }
+    };
 
     private void openCamera(){
         if(!resumed || !hasSurface) return;
@@ -162,24 +164,18 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             cameraManager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
             cameraCharacteristics = cameraManager.getCameraCharacteristics("0");
 
-//        Don't need cause hardcoded the values
-//        StreamConfigurationMap map = cameraCharacteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
-
-            //set preview resolution
-            previewView.measure(1080, 1920);
+            previewView.measure(1920, 1080);
+            previewView.setAspectRatio(1080,1920);
             stPreview.setDefaultBufferSize(1920, 1080);
+//            stPreview.setDefaultBufferSize(1080, 1920);
 
             //set capture resolution
             imageReader = ImageReader.newInstance(1920, 1080, ImageFormat.JPEG, 5);
             imageReader.setOnImageAvailableListener(snapshotImageCallback, cameraHandler);
 
-            surfaceList.clear();
-            surfaceList.add(new Surface(stPreview));
-            surfaceList.add(imageReader.getSurface());
-
             try {
-                if (ActivityCompat.checkSelfPermission(MainActivity.this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED ||
-                        ActivityCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED ||
+                        ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                     requestPermissions();
                     return;
                 }
@@ -191,6 +187,48 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         catch (CameraAccessException e){
             e.printStackTrace();
         }
+    }
+
+    private void createVideoPreview() {
+        if(!resumed || !hasSurface) return;
+
+        try {
+            previewCaptureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
+            previewSurface = new Surface(previewView.getSurfaceTexture());
+            previewCaptureRequestBuilder.addTarget(previewSurface);
+
+            previewCaptureRequestBuilder.set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE
+                    ,CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON);
+
+//            previewCaptureRequest.set(CaptureRequest.CONTROL_AWB_MODE,CaptureRequest.CONTROL_AWB_MODE_OFF);
+//            camDeviceCaptureRequest.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,new Range<>(24,60));
+
+            cameraDevice.createCaptureSession(Collections.singletonList(previewSurface)
+                    , new CameraCaptureSession.StateCallback() {
+                        @Override
+                        public void onConfigured(@NonNull CameraCaptureSession session) {
+                            cameraCaptureSession = session;
+                            try {
+                                cameraCaptureSession.setRepeatingRequest(previewCaptureRequestBuilder.build(), null,mHandler);
+                                if(isVRecording){
+                                    Log.e(TAG, "onConfigured: Preparing media Recorder");
+                                    prepareMediaRecorder();
+                                }
+                            } catch (CameraAccessException e) {
+                                e.printStackTrace();
+                            }
+                        }
+
+                        @Override
+                        public void onConfigureFailed(@NonNull CameraCaptureSession session) {
+                            Log.e(TAG, "onConfigureFailed: createVideoPreview()");
+                        }
+                    },null);
+        }
+        catch (CameraAccessException e) {
+            e.printStackTrace();
+        }
+
     }
 
     private void prepareMediaRecorder(){
@@ -212,7 +250,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         mMediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
         mMediaRecorder.setVideoEncoder(MediaRecorder.VideoEncoder.HEVC);
         mMediaRecorder.setVideoEncodingBitRate(camcorderProfile.videoBitRate);
-        mMediaRecorder.setVideoSize(1080,1920);
+        mMediaRecorder.setVideoSize(1920,1080);
 
         shouldDeleteEmptyFile = true;
         videoFile = new File(mVideoLocation+mVideoSuffix);
@@ -232,8 +270,8 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         shouldDeleteEmptyFile = false;
         try {
             SurfaceTexture surfaceTexture = previewView.getSurfaceTexture();
-            surfaceTexture.setDefaultBufferSize(1080, 1920);
-// //   //            Surface previewSurface = new Surface(surfaceTexture); //TODO : free surface with #release
+            surfaceTexture.setDefaultBufferSize(1920, 1080);
+            Surface previewSurface = new Surface(surfaceTexture); //TODO : free surface with #release
 
             if(!isVRecording){
 
@@ -244,7 +282,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 previewCaptureRequestBuilder.addTarget(recordSurface);
 
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                    OutputConfiguration previewConfiguration = new OutputConfiguration(surfaceList.get(0));
+                    OutputConfiguration previewConfiguration = new OutputConfiguration(previewSurface);
                     OutputConfiguration recordConfiguration = new OutputConfiguration(recordSurface);
                     SessionConfiguration sessionConfiguration = new SessionConfiguration(SessionConfiguration.SESSION_REGULAR
                             , Arrays.asList(previewConfiguration,recordConfiguration)
@@ -271,7 +309,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                     cameraDevice.createCaptureSession(sessionConfiguration);
                 }
                 else {
-                    cameraDevice.createCaptureSession(Arrays.asList(surfaceList.get(0), recordSurface, imageReader.getSurface())
+                    cameraDevice.createCaptureSession(Arrays.asList(previewSurface, recordSurface, imageReader.getSurface())
                             , new CameraCaptureSession.StateCallback() {
                                 @Override
                                 public void onConfigured(CameraCaptureSession session) {
@@ -302,7 +340,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             captureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
             captureRequestBuilder.set(CaptureRequest.JPEG_QUALITY,(byte) 100);
             captureRequestBuilder.set(CaptureRequest.JPEG_ORIENTATION,getJpegOrientation());
-            captureRequestBuilder.addTarget(surfaceList.get(1));
+//            captureRequestBuilder.addTarget(surfaceList.get(1));
 
             cameraCaptureSession.capture(captureRequestBuilder.build(), null, mHandler);
 
@@ -324,7 +362,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     }
 
 
-
     ImageReader.OnImageAvailableListener snapshotImageCallback = imageReader -> {
         Log.e(TAG, "onImageAvailable: received snapshot image data");
         Completable.fromRunnable(new ImageSaverThread(this,
@@ -343,7 +380,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
                     @Override
                     public void onComplete() {
-                        displayLatestImage();
+                        displayLatestThumbnail();
                     }
                 });
 
@@ -353,32 +390,8 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         @Override
         public void onOpened(@NonNull CameraDevice camera) {
             cameraDevice = camera;
-
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                List<OutputConfiguration> outputs = new ArrayList<>();
-                outputs.add(new OutputConfiguration(surfaceList.get(0)));
-                outputs.add(new OutputConfiguration(surfaceList.get(1)));
-                SessionConfiguration sessionConfiguration = new SessionConfiguration(SessionConfiguration.SESSION_REGULAR,
-                        outputs,
-                        getMainExecutor(),
-                        stateCallback);
-
-                try {
-//                    create only one session i.e, after start recording
-                    cameraDevice.createCaptureSession(sessionConfiguration);
-                } catch (CameraAccessException e) {
-                    e.printStackTrace();
-                }
-            }
-            else{
-                try {
-                    cameraDevice.createCaptureSession(surfaceList,stateCallback, cameraHandler);
-                } catch (CameraAccessException e) {
-                    e.printStackTrace();
-                }
-            }
-
-            runOnUiThread(() -> previewView.setAspectRatio(1080,1920));
+            createVideoPreview();
+//            runOnUiThread(() -> previewView.setAspectRatio(1080,1920));
         }
 
         @Override
@@ -400,13 +413,14 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
             try {
                 previewCaptureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
-                previewCaptureRequestBuilder.addTarget(surfaceList.get(0));
+//                previewCaptureRequestBuilder.addTarget(surfaceList.get(0));
                 previewCaptureRequestBuilder.set(CaptureRequest.JPEG_ORIENTATION, ORIENTATIONS.get(0));
                 previewCaptureRequestBuilder.set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE
                         ,CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON);
 
                 cameraCaptureSession.setRepeatingRequest(previewCaptureRequestBuilder.build(), null, null);
 
+                prepareMediaRecorder();
             } catch (CameraAccessException e) {
                 e.printStackTrace();
             }
@@ -420,7 +434,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     };
 
 
-    private void displayLatestImage() {
+    private void displayLatestThumbnail() {
         LatestThumbnailGeneratorThread ltg;
         Completable.fromRunnable(ltg = new LatestThumbnailGeneratorThread(this))
                 .subscribeOn(Schedulers.io())
@@ -429,6 +443,20 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                     thumbPreview.setImageBitmap(ltg.getBitmap());
                     Log.e(TAG, "displayLatestImage: Updated Thumbnail");
                 })).subscribe();
+    }
+
+    public void performMediaScan(String filename, String type){
+        String mimeType = null;
+        if(type.equals("image")) mimeType = "image/jpeg";
+        else if(type.equals("video")) mimeType = "video/mp4";
+        MediaScannerConnection.scanFile(this
+                ,new String[] { filename }
+                ,new String[] { mimeType }
+                ,(path, uri) -> {
+                    Log.i("TAG", "Scanned " + path + ":");
+                    Log.i("TAG", "-> uri=" + uri);
+                    fileUri = uri;
+                });
     }
 
     private int getJpegOrientation() {
@@ -474,31 +502,39 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     }
 
     boolean paused = false;
+
     @Override
     public void onClick(View v) {
         int id = v.getId();
         if (id == R.id.capture) {
+            isVRecording = !isVRecording;
             if(!isVRecording){
+                Log.e(TAG, "onClick: Start Recording");
+                sound.play(MediaActionSound.START_VIDEO_RECORDING);
                 startRecording();
             }
             else {
+                Log.e(TAG, "onClick: Stop Recording");
                 mMediaRecorder.stop();
-                mMediaRecorder.reset();
+                sound.play(MediaActionSound.STOP_VIDEO_RECORDING);
+                performMediaScan(videoFile.getAbsolutePath(),"video");
+                createVideoPreview();
+                displayLatestThumbnail();
+//                mMediaRecorder.reset();
             }
-//            captureImage();
         }
         else if (id == R.id.thumbnail_snapshot) {
-            if(ImageSaverThread.staticUri == null){
+            if(fileUri == null){
                 Intent i = new Intent(Intent.ACTION_VIEW);
                 i.setDataAndType(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image/jpeg");
                 startActivity(i);
             }
             else{
-                Log.e(TAG, "onClick: uri : "+ImageSaverThread.staticUri);
                 final String GALLERY_REVIEW = "com.android.camera.action.REVIEW";
                 Intent i = new Intent(GALLERY_REVIEW);
-                i.setData(ImageSaverThread.staticUri);
+                i.setData(fileUri);
                 startActivity(i);
+
             }
         }
         else if (id == R.id.pause_resume){
@@ -514,20 +550,26 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         super.onResume();
         resumed = true;
         startBackgroundThread();
-        openCamera();
-        displayLatestImage();
+        if (previewView.isAvailable()) {
+            openCamera();
+        } else {
+            previewView.setSurfaceTextureListener(mSurfaceTextureListener);
+        }
+        displayLatestThumbnail();
     }
 
     @Override
     protected void onPause() {
         super.onPause();
         resumed = false;
+        performFileCleanup();
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
         closeCamera();
+        performFileCleanup();
         stopBackgroundThread();
     }
 }
