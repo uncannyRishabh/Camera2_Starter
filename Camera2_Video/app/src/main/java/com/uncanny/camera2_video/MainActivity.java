@@ -31,12 +31,14 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.SystemClock;
 import android.provider.MediaStore;
 import android.util.Log;
 import android.util.SparseIntArray;
 import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
+import android.widget.Chronometer;
 import android.widget.Toast;
 
 import com.google.android.material.imageview.ShapeableImageView;
@@ -66,6 +68,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         ORIENTATIONS.append(Surface.ROTATION_270, 180);
     }
 
+    private Chronometer chronometer;
     private ShapeableImageView capture;
     private ShapeableImageView thumbPreview;
     private AutoFitPreviewView previewView;
@@ -81,7 +84,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private CaptureRequest.Builder previewCaptureRequestBuilder;
     private ImageReader imageReader;
     private MediaRecorder mMediaRecorder;
-    private CamcorderProfile camcorderProfile = CamcorderProfile.get(CamcorderProfile.QUALITY_1080P);
+    private CamcorderProfile camcorderProfile = CamcorderProfile.get(CamcorderProfile.QUALITY_HIGH);
 
     private MediaActionSound sound = new MediaActionSound();
 
@@ -104,6 +107,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         capture = findViewById(R.id.capture);
         thumbPreview = findViewById(R.id.thumbnail_snapshot);
         previewView = findViewById(R.id.preview);
+        chronometer = findViewById(R.id.chronometer);
 
         capture.setOnClickListener(this);
         thumbPreview.setOnClickListener(this);
@@ -213,7 +217,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         mMediaRecorder.setVideoEncodingBitRate(camcorderProfile.videoBitRate);
         mMediaRecorder.setVideoSize(1920,1080);
 
-
         shouldDeleteEmptyFile = true;
         videoFile = new File(mVideoLocation+mVideoSuffix);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -239,7 +242,8 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             previewView.getSurfaceTexture().setDefaultBufferSize(1920, 1080);
             previewSurface = new Surface(previewView.getSurfaceTexture());
 
-            recordSurface = persistentSurface;
+            recordSurface = persistentSurface; // TODO: PersistentSurface not recording video in some devices
+//            recordSurface = mMediaRecorder.getSurface();
 
             previewCaptureRequestBuilder.addTarget(recordSurface);
 
@@ -445,11 +449,14 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         int id = v.getId();
         if (id == R.id.capture) {
             if(!isVRecording){
+                chronometer.setBase(SystemClock.elapsedRealtime());
+                chronometer.start();
                 Log.e(TAG, "onClick: Start Recording");
                 sound.play(MediaActionSound.START_VIDEO_RECORDING);
                 startRecording();
             }
             else {
+                chronometer.stop();
                 Log.e(TAG, "onClick: Stop Recording");
                 mMediaRecorder.stop();
                 performMediaScan(videoFile.getAbsolutePath(),"video"); //TODO : Handle Efficiently
@@ -457,6 +464,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 sound.play(MediaActionSound.STOP_VIDEO_RECORDING);
                 displayLatestThumbnail(); //TODO : Handle Efficiently
             }
+            chronometer.setVisibility(isVRecording ? View.INVISIBLE : View.VISIBLE);
             isVRecording = !isVRecording;
         }
         else if (id == R.id.thumbnail_snapshot) {
