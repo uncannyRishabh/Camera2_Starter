@@ -23,6 +23,7 @@ import android.hardware.camera2.params.SessionConfiguration;
 import android.media.CamcorderProfile;
 import android.media.ImageReader;
 import android.media.MediaActionSound;
+import android.media.MediaCodec;
 import android.media.MediaRecorder;
 import android.media.MediaScannerConnection;
 import android.net.Uri;
@@ -43,6 +44,8 @@ import com.google.android.material.imageview.ShapeableImageView;
 import java.io.File;
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers;
 import io.reactivex.rxjava3.core.Completable;
@@ -67,7 +70,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private ShapeableImageView thumbPreview;
     private AutoFitPreviewView previewView;
 
-    private Surface previewSurface;
+    private Surface recordSurface,previewSurface,persistentSurface;
     private SurfaceTexture stPreview;
 
     private CameraDevice cameraDevice;
@@ -78,17 +81,19 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private CaptureRequest.Builder previewCaptureRequestBuilder;
     private ImageReader imageReader;
     private MediaRecorder mMediaRecorder;
+    private CamcorderProfile camcorderProfile = CamcorderProfile.get(CamcorderProfile.QUALITY_1080P);
 
     private MediaActionSound sound = new MediaActionSound();
 
     private Handler cameraHandler;
     private Handler mHandler = new Handler();
     private HandlerThread mBackgroundThread;
+    private Executor bgExecutor = Executors.newCachedThreadPool();
 
     private File videoFile;
     private boolean resumed = false, hasSurface = false;
     private boolean shouldDeleteEmptyFile;
-    private boolean isVRecording = true;
+    private boolean isVRecording = false;
     private Uri fileUri;
 
     @Override
@@ -171,6 +176,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             imageReader.setOnImageAvailableListener(snapshotImageCallback, cameraHandler);
 
             try {
+                persistentSurface = MediaCodec.createPersistentInputSurface();
                 if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED ||
                         ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                     requestPermissions();
@@ -185,17 +191,56 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         }
     }
 
+    private void prepareMediaRecorder(){
+        String mVideoLocation = "//storage//emulated//0//DCIM//Camera//";
+        String mVideoSuffix = "Camera2_Video_" + System.currentTimeMillis() + ".mp4";
+//        CamcorderProfile camcorderProfile = CamcorderProfile.get(CamcorderProfile.QUALITY_1080P);
+
+        if(resumed)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) mMediaRecorder = new MediaRecorder(this);
+            else mMediaRecorder = new MediaRecorder();
+        mMediaRecorder.setOrientationHint(getJpegOrientation()); //90   // TODO : CHANGE ACCORDING TO SENSOR ORIENTATION
+        mMediaRecorder.setAudioSource(MediaRecorder.AudioSource.DEFAULT);
+        mMediaRecorder.setAudioSamplingRate(camcorderProfile.audioSampleRate);
+        mMediaRecorder.setAudioEncodingBitRate(camcorderProfile.audioBitRate);
+        mMediaRecorder.setAudioChannels(camcorderProfile.audioChannels);
+        mMediaRecorder.setVideoSource(MediaRecorder.VideoSource.SURFACE);
+        mMediaRecorder.setInputSurface(persistentSurface);
+        mMediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
+        mMediaRecorder.setVideoFrameRate(30);
+        mMediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
+        mMediaRecorder.setVideoEncoder(MediaRecorder.VideoEncoder.HEVC);
+        mMediaRecorder.setVideoEncodingBitRate(camcorderProfile.videoBitRate);
+        mMediaRecorder.setVideoSize(1920,1080);
+
+
+        shouldDeleteEmptyFile = true;
+        videoFile = new File(mVideoLocation+mVideoSuffix);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            mMediaRecorder.setOutputFile(videoFile);
+        } else {
+            mMediaRecorder.setOutputFile(mVideoLocation+mVideoSuffix);
+        }
+
+        try {
+            mMediaRecorder.prepare();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
     private void createVideoPreview() {
         if(!resumed || !hasSurface) return;
 
         try {
-            prepareMediaRecorder();
 
+            prepareMediaRecorder();
             previewCaptureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
             previewView.getSurfaceTexture().setDefaultBufferSize(1920, 1080);
             previewSurface = new Surface(previewView.getSurfaceTexture());
 
-            Surface recordSurface = mMediaRecorder.getSurface();
+            recordSurface = persistentSurface;
+
             previewCaptureRequestBuilder.addTarget(recordSurface);
 
             previewCaptureRequestBuilder.addTarget(previewSurface);
@@ -209,7 +254,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 OutputConfiguration snapshotConfiguration = new OutputConfiguration(imageReader.getSurface());
                 SessionConfiguration sessionConfiguration = new SessionConfiguration(SessionConfiguration.SESSION_REGULAR
                         , Arrays.asList(previewConfiguration,recordConfiguration,snapshotConfiguration)
-                        , getMainExecutor()
+                        , bgExecutor
                         , streamlineCaptureSessionCallback);
 
                 cameraDevice.createCaptureSession(sessionConfiguration);
@@ -218,6 +263,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 cameraDevice.createCaptureSession(Arrays.asList(previewSurface, recordSurface, imageReader.getSurface())
                         ,streamlineCaptureSessionCallback,null);
             }
+
         }
         catch (CameraAccessException e) {
             e.printStackTrace();
@@ -244,41 +290,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             Log.e(TAG, "onConfigureFailed: createVideoPreview()");
         }
     };
-
-    private void prepareMediaRecorder(){
-        String mVideoLocation = "//storage//emulated//0//DCIM//Camera//";
-        String mVideoSuffix = "Camera2_Video_" + System.currentTimeMillis() + ".mp4";
-        CamcorderProfile camcorderProfile = CamcorderProfile.get(CamcorderProfile.QUALITY_1080P);
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) mMediaRecorder = new MediaRecorder(this);
-        else mMediaRecorder = new MediaRecorder();
-        mMediaRecorder.reset();
-        mMediaRecorder.setOrientationHint(getJpegOrientation()); //90   // TODO : CHANGE ACCORDING TO SENSOR ORIENTATION
-        mMediaRecorder.setAudioSource(MediaRecorder.AudioSource.DEFAULT);
-        mMediaRecorder.setAudioSamplingRate(camcorderProfile.audioSampleRate);
-        mMediaRecorder.setAudioEncodingBitRate(camcorderProfile.audioBitRate);
-        mMediaRecorder.setAudioChannels(camcorderProfile.audioChannels);
-        mMediaRecorder.setVideoSource(MediaRecorder.VideoSource.SURFACE);
-        mMediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
-        mMediaRecorder.setVideoFrameRate(30);
-        mMediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
-        mMediaRecorder.setVideoEncoder(MediaRecorder.VideoEncoder.HEVC);
-        mMediaRecorder.setVideoEncodingBitRate(camcorderProfile.videoBitRate);
-        mMediaRecorder.setVideoSize(1920,1080);
-
-        shouldDeleteEmptyFile = true;
-        videoFile = new File(mVideoLocation+mVideoSuffix);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            mMediaRecorder.setOutputFile(videoFile);
-        } else {
-            mMediaRecorder.setOutputFile(mVideoLocation+mVideoSuffix);
-        }
-        try {
-            mMediaRecorder.prepare();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
 
     private void startRecording(){
         shouldDeleteEmptyFile = false;
@@ -340,6 +351,11 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         @Override
         public void onOpened(@NonNull CameraDevice camera) {
             cameraDevice = camera;
+            if(resumed) {
+                Log.e(TAG, "onOpened: SURFACE ABANDONED");
+                persistentSurface = MediaCodec.createPersistentInputSurface();
+                mMediaRecorder = null;
+            }
             createVideoPreview();
         }
 
@@ -428,7 +444,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     public void onClick(View v) {
         int id = v.getId();
         if (id == R.id.capture) {
-            isVRecording = !isVRecording;
             if(!isVRecording){
                 Log.e(TAG, "onClick: Start Recording");
                 sound.play(MediaActionSound.START_VIDEO_RECORDING);
@@ -437,12 +452,13 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             else {
                 Log.e(TAG, "onClick: Stop Recording");
                 mMediaRecorder.stop();
-//                prepareMediaRecorder();
-                sound.play(MediaActionSound.STOP_VIDEO_RECORDING);
                 performMediaScan(videoFile.getAbsolutePath(),"video");
+                prepareMediaRecorder();
                 createVideoPreview();
+                sound.play(MediaActionSound.STOP_VIDEO_RECORDING);
                 displayLatestThumbnail();
             }
+            isVRecording = !isVRecording;
         }
         else if (id == R.id.thumbnail_snapshot) {
             if(fileUri == null){
@@ -487,10 +503,20 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     }
 
     @Override
+    protected void onStop() {
+        super.onStop();
+        closeCamera();
+        performFileCleanup();
+        stopBackgroundThread();
+        persistentSurface.release();
+    }
+
+    @Override
     protected void onDestroy() {
         super.onDestroy();
         closeCamera();
         performFileCleanup();
         stopBackgroundThread();
+        persistentSurface.release();
     }
 }
