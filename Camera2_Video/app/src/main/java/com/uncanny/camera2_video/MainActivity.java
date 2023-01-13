@@ -46,6 +46,7 @@ import com.google.android.material.imageview.ShapeableImageView;
 import java.io.File;
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 
@@ -203,13 +204,13 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         if(resumed)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) mMediaRecorder = new MediaRecorder(this);
             else mMediaRecorder = new MediaRecorder();
-        mMediaRecorder.setOrientationHint(getJpegOrientation()); //90   // TODO : CHANGE ACCORDING TO SENSOR ORIENTATION
+        mMediaRecorder.setOrientationHint(getJpegOrientation());
         mMediaRecorder.setAudioSource(MediaRecorder.AudioSource.DEFAULT);
         mMediaRecorder.setAudioSamplingRate(camcorderProfile.audioSampleRate);
         mMediaRecorder.setAudioEncodingBitRate(camcorderProfile.audioBitRate);
         mMediaRecorder.setAudioChannels(camcorderProfile.audioChannels);
         mMediaRecorder.setVideoSource(MediaRecorder.VideoSource.SURFACE);
-        mMediaRecorder.setInputSurface(persistentSurface);
+//        mMediaRecorder.setInputSurface(persistentSurface);
         mMediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
         mMediaRecorder.setVideoFrameRate(30);
         mMediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
@@ -236,14 +237,13 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         if(!resumed || !hasSurface) return;
 
         try {
-
             prepareMediaRecorder();
             previewCaptureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
             previewView.getSurfaceTexture().setDefaultBufferSize(1920, 1080);
             previewSurface = new Surface(previewView.getSurfaceTexture());
 
-            recordSurface = persistentSurface; // TODO: PersistentSurface not recording video in some devices
-//            recordSurface = mMediaRecorder.getSurface();
+//            recordSurface = persistentSurface; // TODO: PersistentSurface not recording video in some devices
+            recordSurface = mMediaRecorder.getSurface();
 
             previewCaptureRequestBuilder.addTarget(recordSurface);
 
@@ -460,7 +460,8 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 Log.e(TAG, "onClick: Stop Recording");
                 mMediaRecorder.stop();
                 performMediaScan(videoFile.getAbsolutePath(),"video"); //TODO : Handle Efficiently
-                prepareMediaRecorder();
+                createVideoPreview(); //without persistentSurface
+//                prepareMediaRecorder(); //with persistentSurface
                 sound.play(MediaActionSound.STOP_VIDEO_RECORDING);
                 displayLatestThumbnail(); //TODO : Handle Efficiently
             }
