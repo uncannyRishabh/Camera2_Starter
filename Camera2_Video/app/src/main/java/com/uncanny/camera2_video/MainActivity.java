@@ -71,6 +71,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
     private Chronometer chronometer;
     private ShapeableImageView capture;
+    private ShapeableImageView pauseResume;
     private ShapeableImageView thumbPreview;
     private AutoFitPreviewView previewView;
 
@@ -85,7 +86,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private CaptureRequest.Builder previewCaptureRequestBuilder;
     private ImageReader imageReader;
     private MediaRecorder mMediaRecorder;
-    private CamcorderProfile camcorderProfile = CamcorderProfile.get(CamcorderProfile.QUALITY_HIGH);
+    private CamcorderProfile camcorderProfile = CamcorderProfile.get(CamcorderProfile.QUALITY_TIME_LAPSE_1080P);
 
     private MediaActionSound sound = new MediaActionSound();
 
@@ -106,11 +107,13 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         setContentView(R.layout.activity_main);
 
         capture = findViewById(R.id.capture);
+        pauseResume = findViewById(R.id.pause_resume);
         thumbPreview = findViewById(R.id.thumbnail_snapshot);
         previewView = findViewById(R.id.preview);
         chronometer = findViewById(R.id.chronometer);
 
         capture.setOnClickListener(this);
+        pauseResume.setOnClickListener(this);
         thumbPreview.setOnClickListener(this);
 
         requestPermissions();
@@ -199,7 +202,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private void prepareMediaRecorder(){
         String mVideoLocation = "//storage//emulated//0//DCIM//Camera//";
         String mVideoSuffix = "Camera2_Video_" + System.currentTimeMillis() + ".mp4";
-//        CamcorderProfile camcorderProfile = CamcorderProfile.get(CamcorderProfile.QUALITY_1080P);
 
         if(resumed)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) mMediaRecorder = new MediaRecorder(this);
@@ -218,6 +220,12 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         mMediaRecorder.setVideoEncodingBitRate(camcorderProfile.videoBitRate);
         mMediaRecorder.setVideoSize(1920,1080);
 
+//        camcorderProfile = CamcorderProfile.get(CamcorderProfile.QUALITY_TIME_LAPSE_1080P);
+//        mMediaRecorder.setOrientationHint(getJpegOrientation());
+//        mMediaRecorder.setVideoSource(MediaRecorder.VideoSource.SURFACE);
+//        mMediaRecorder.setProfile(camcorderProfile);
+//        mMediaRecorder.setCaptureRate(.5f);  //12 10 2
+
         shouldDeleteEmptyFile = true;
         videoFile = new File(mVideoLocation+mVideoSuffix);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -233,7 +241,11 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         }
     }
 
-    private void createVideoPreview() {
+    private OutputConfiguration previewConfiguration;
+    private OutputConfiguration recordConfiguration;
+    private OutputConfiguration snapshotConfiguration;
+
+    private void createVideoPreview()  {
         if(!resumed || !hasSurface) return;
 
         try {
@@ -253,9 +265,12 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                     ,CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON);
 
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                OutputConfiguration previewConfiguration = new OutputConfiguration(previewSurface);
-                OutputConfiguration recordConfiguration = new OutputConfiguration(recordSurface);
+                OutputConfiguration previewConfiguration  = new OutputConfiguration(previewSurface);
+                OutputConfiguration recordConfiguration   = new OutputConfiguration(recordSurface);
                 OutputConfiguration snapshotConfiguration = new OutputConfiguration(imageReader.getSurface());
+
+//                previewConfiguration.enableSurfaceSharing();
+
                 SessionConfiguration sessionConfiguration = new SessionConfiguration(SessionConfiguration.SESSION_REGULAR
                         , Arrays.asList(previewConfiguration,recordConfiguration,snapshotConfiguration)
                         , bgExecutor
@@ -443,21 +458,20 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     }
 
     boolean paused = false;
-
+    long pauseDuration;
     @Override
     public void onClick(View v) {
         int id = v.getId();
         if (id == R.id.capture) {
             if(!isVRecording){
-                chronometer.setBase(SystemClock.elapsedRealtime());
+                chronometer.setBase(SystemClock.elapsedRealtime() - pauseDuration);
                 chronometer.start();
-                Log.e(TAG, "onClick: Start Recording");
                 sound.play(MediaActionSound.START_VIDEO_RECORDING);
                 startRecording();
             }
             else {
                 chronometer.stop();
-                Log.e(TAG, "onClick: Stop Recording");
+                pauseDuration = 0;
                 mMediaRecorder.stop();
                 performMediaScan(videoFile.getAbsolutePath(),"video"); //TODO : Handle Efficiently
                 createVideoPreview(); //without persistentSurface
@@ -465,28 +479,48 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 sound.play(MediaActionSound.STOP_VIDEO_RECORDING);
                 displayLatestThumbnail(); //TODO : Handle Efficiently
             }
-            chronometer.setVisibility(isVRecording ? View.INVISIBLE : View.VISIBLE);
+            runOnUiThread(()->{
+                pauseResume.setVisibility(isVRecording ? View.INVISIBLE : View.VISIBLE);
+                chronometer.setVisibility(isVRecording ? View.INVISIBLE : View.VISIBLE);
+//                thumbPreview.setImageDrawable(ContextCompat.getDrawable(this,R.drawable.capture));
+            });
             isVRecording = !isVRecording;
         }
         else if (id == R.id.thumbnail_snapshot) {
-            if(fileUri == null){
-                Intent i = new Intent(Intent.ACTION_VIEW);
-                i.setDataAndType(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image/jpeg");
-                startActivity(i);
-            }
-            else{
-                final String GALLERY_REVIEW = "com.android.camera.action.REVIEW";
-                Intent i = new Intent(GALLERY_REVIEW);
-                i.setData(fileUri);
-                startActivity(i);
+            if(isVRecording){
 
             }
+            else {
+                if(fileUri == null){
+                    Intent i = new Intent(Intent.ACTION_VIEW);
+                    i.setDataAndType(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image/jpeg");
+                    startActivity(i);
+                }
+                else{
+                    final String GALLERY_REVIEW = "com.android.camera.action.REVIEW";
+                    Intent i = new Intent(GALLERY_REVIEW);
+                    i.setData(fileUri);
+                    startActivity(i);
+
+                }
+            }
+
         }
         else if (id == R.id.pause_resume){
+            Log.e(TAG, "onClick: PAUSE /RESUME");
+            if(paused) {
+                mMediaRecorder.resume();
+                chronometer.setBase(SystemClock.elapsedRealtime() - pauseDuration);
+                chronometer.start();
+                pauseResume.setImageDrawable(ContextCompat.getDrawable(this, R.drawable.ic_round_pause_24));
+            }
+            else {
+                mMediaRecorder.pause();
+                chronometer.stop();
+                pauseDuration = SystemClock.elapsedRealtime() - chronometer.getBase();
+                pauseResume.setImageDrawable(ContextCompat.getDrawable(this, R.drawable.ic_round_play_arrow_24));
+            }
             paused = !paused;
-            if(paused) mMediaRecorder.resume();
-            else mMediaRecorder.pause();
-
         }
     }
 
