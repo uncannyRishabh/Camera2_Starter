@@ -317,14 +317,12 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
     private void captureImage() {
         try {
-            captureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
+            captureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_VIDEO_SNAPSHOT);
             captureRequestBuilder.set(CaptureRequest.JPEG_QUALITY,(byte) 100);
             captureRequestBuilder.set(CaptureRequest.JPEG_ORIENTATION,getJpegOrientation());
-//            captureRequestBuilder.addTarget(surfaceList.get(1));
+            captureRequestBuilder.addTarget(imageReader.getSurface());
 
             cameraCaptureSession.capture(captureRequestBuilder.build(), null, mHandler);
-
-            sound.play(MediaActionSound.SHUTTER_CLICK);
         } catch (CameraAccessException e) {
             e.printStackTrace();
         }
@@ -360,7 +358,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
                     @Override
                     public void onComplete() {
-                        displayLatestThumbnail();
+//                        displayLatestThumbnail();
                     }
                 });
 
@@ -473,6 +471,8 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 chronometer.stop();
                 pauseDuration = 0;
                 mMediaRecorder.stop();
+                mMediaRecorder.reset();
+                mMediaRecorder.release();
                 performMediaScan(videoFile.getAbsolutePath(),"video"); //TODO : Handle Efficiently
                 createVideoPreview(); //without persistentSurface
 //                prepareMediaRecorder(); //with persistentSurface
@@ -482,13 +482,13 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             runOnUiThread(()->{
                 pauseResume.setVisibility(isVRecording ? View.INVISIBLE : View.VISIBLE);
                 chronometer.setVisibility(isVRecording ? View.INVISIBLE : View.VISIBLE);
-//                thumbPreview.setImageDrawable(ContextCompat.getDrawable(this,R.drawable.capture));
+                thumbPreview.setImageDrawable(isVRecording ? null : ContextCompat.getDrawable(this,R.drawable.ic_capture_btn));
             });
             isVRecording = !isVRecording;
         }
         else if (id == R.id.thumbnail_snapshot) {
             if(isVRecording){
-
+                captureImage();
             }
             else {
                 if(fileUri == null){
@@ -541,6 +541,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     protected void onPause() {
         super.onPause();
         resumed = false;
+        mMediaRecorder.release();
         performFileCleanup();
     }
 
@@ -550,6 +551,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         closeCamera();
         performFileCleanup();
         stopBackgroundThread();
+        mMediaRecorder.release();
         persistentSurface.release();
     }
 
@@ -559,6 +561,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         closeCamera();
         performFileCleanup();
         stopBackgroundThread();
+        mMediaRecorder.release();
         persistentSurface.release();
     }
 }

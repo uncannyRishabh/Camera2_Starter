@@ -39,7 +39,8 @@
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintBottom_toBottomOf="parent"
         android:layout_marginBottom="120dp"
-        android:background="@color/white"
+        android:background="#817B7B"
+        app:srcCompat="@drawable/ic_capture_btn"
         app:shapeAppearanceOverlay="@style/circularImageView"
         />
 
