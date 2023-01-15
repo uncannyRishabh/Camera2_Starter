@@ -86,7 +86,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private CaptureRequest.Builder previewCaptureRequestBuilder;
     private ImageReader imageReader;
     private MediaRecorder mMediaRecorder;
-    private CamcorderProfile camcorderProfile = CamcorderProfile.get(CamcorderProfile.QUALITY_TIME_LAPSE_1080P);
+    private CamcorderProfile camcorderProfile = CamcorderProfile.get(CamcorderProfile.QUALITY_1080P);
 
     private MediaActionSound sound = new MediaActionSound();
 
@@ -219,12 +219,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         mMediaRecorder.setVideoEncoder(MediaRecorder.VideoEncoder.HEVC);
         mMediaRecorder.setVideoEncodingBitRate(camcorderProfile.videoBitRate);
         mMediaRecorder.setVideoSize(1920,1080);
-
-//        camcorderProfile = CamcorderProfile.get(CamcorderProfile.QUALITY_TIME_LAPSE_1080P);
-//        mMediaRecorder.setOrientationHint(getJpegOrientation());
-//        mMediaRecorder.setVideoSource(MediaRecorder.VideoSource.SURFACE);
-//        mMediaRecorder.setProfile(camcorderProfile);
-//        mMediaRecorder.setCaptureRate(.5f);  //12 10 2
 
         shouldDeleteEmptyFile = true;
         videoFile = new File(mVideoLocation+mVideoSuffix);
@@ -541,7 +535,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     protected void onPause() {
         super.onPause();
         resumed = false;
-        mMediaRecorder.release();
+        if(mMediaRecorder != null) mMediaRecorder.release();
         performFileCleanup();
     }
 
@@ -551,7 +545,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         closeCamera();
         performFileCleanup();
         stopBackgroundThread();
-        mMediaRecorder.release();
+        if(mMediaRecorder != null) mMediaRecorder.release();
         persistentSurface.release();
     }
 
@@ -561,7 +555,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         closeCamera();
         performFileCleanup();
         stopBackgroundThread();
-        mMediaRecorder.release();
+        if(mMediaRecorder != null) mMediaRecorder.release();
         persistentSurface.release();
     }
 }

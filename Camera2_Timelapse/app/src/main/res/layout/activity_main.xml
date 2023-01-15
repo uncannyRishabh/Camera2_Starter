@@ -7,7 +7,7 @@
     android:background="@color/black"
     tools:context=".MainActivity">
 
-    <com.uncanny.camera2_video.AutoFitPreviewView
+    <com.uncanny.camera2_timelapse.AutoFitPreviewView
         android:id="@+id/preview"
         android:layout_width="match_parent"
         android:layout_height="0dp"
