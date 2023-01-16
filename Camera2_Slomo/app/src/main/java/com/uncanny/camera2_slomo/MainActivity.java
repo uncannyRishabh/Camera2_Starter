@@ -15,6 +15,7 @@ import android.graphics.SurfaceTexture;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
+import android.hardware.camera2.CameraConstrainedHighSpeedCaptureSession;
 import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CaptureRequest;
@@ -34,6 +35,7 @@ import android.os.HandlerThread;
 import android.os.SystemClock;
 import android.provider.MediaStore;
 import android.util.Log;
+import android.util.Range;
 import android.util.SparseIntArray;
 import android.view.Surface;
 import android.view.TextureView;
@@ -79,13 +81,13 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
     private CameraDevice cameraDevice;
     private CameraManager cameraManager;
-    private CameraCaptureSession cameraCaptureSession;
+    private CameraConstrainedHighSpeedCaptureSession cameraCaptureSession;
     private CameraCharacteristics cameraCharacteristics;
     private CaptureRequest.Builder captureRequestBuilder;
     private CaptureRequest.Builder previewCaptureRequestBuilder;
     private ImageReader imageReader;
     private MediaRecorder mMediaRecorder;
-    private CamcorderProfile camcorderProfile = CamcorderProfile.get(CamcorderProfile.QUALITY_1080P);
+//    private CamcorderProfile camcorderProfile = CamcorderProfile.get(CamcorderProfile.QUALITY_HIGH_SPEED_1080P);
 
     private MediaActionSound sound = new MediaActionSound();
 
@@ -142,6 +144,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
     }
 
+
     private TextureView.SurfaceTextureListener mSurfaceTextureListener = new TextureView.SurfaceTextureListener() {
         @Override
         public void onSurfaceTextureAvailable(@NonNull SurfaceTexture surface, int width, int height) {
@@ -176,11 +179,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
             previewView.measure(1920, 1080);
             previewView.setAspectRatio(1080,1920);
-            stPreview.setDefaultBufferSize(1920, 1080);
-
-            //set capture resolution
-            imageReader = ImageReader.newInstance(1920, 1080, ImageFormat.JPEG, 5);
-            imageReader.setOnImageAvailableListener(snapshotImageCallback, cameraHandler);
+            stPreview.setDefaultBufferSize(1280, 720);
 
             try {
                 persistentSurface = MediaCodec.createPersistentInputSurface();
@@ -200,24 +199,24 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
     private void prepareMediaRecorder(){
         String mVideoLocation = "//storage//emulated//0//DCIM//Camera//";
-        String mVideoSuffix = "Camera2_Video_" + System.currentTimeMillis() + ".mp4";
+        String mVideoSuffix = "Camera2_Video_" + System.currentTimeMillis()+ "_HSR_120" + ".mp4";
 
         if(resumed)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) mMediaRecorder = new MediaRecorder(this);
             else mMediaRecorder = new MediaRecorder();
         mMediaRecorder.setOrientationHint(getJpegOrientation());
         mMediaRecorder.setAudioSource(MediaRecorder.AudioSource.DEFAULT);
-        mMediaRecorder.setAudioSamplingRate(camcorderProfile.audioSampleRate);
-        mMediaRecorder.setAudioEncodingBitRate(camcorderProfile.audioBitRate);
-        mMediaRecorder.setAudioChannels(camcorderProfile.audioChannels);
+        mMediaRecorder.setAudioSamplingRate(48000);
+        mMediaRecorder.setAudioEncodingBitRate(96000);
+        mMediaRecorder.setAudioChannels(1);
         mMediaRecorder.setVideoSource(MediaRecorder.VideoSource.SURFACE);
 //        mMediaRecorder.setInputSurface(persistentSurface);
         mMediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
-        mMediaRecorder.setVideoFrameRate(30);
+        mMediaRecorder.setVideoFrameRate(120); // for maximizing support (might add checks later)
         mMediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
         mMediaRecorder.setVideoEncoder(MediaRecorder.VideoEncoder.HEVC);
-        mMediaRecorder.setVideoEncodingBitRate(camcorderProfile.videoBitRate);
-        mMediaRecorder.setVideoSize(1920,1080);
+        mMediaRecorder.setVideoEncodingBitRate(7372800); // calculation -> 720*1280*120/15
+        mMediaRecorder.setVideoSize(1280,720); // for maximizing support (might add checks later)
 
         shouldDeleteEmptyFile = true;
         videoFile = new File(mVideoLocation+mVideoSuffix);
@@ -234,18 +233,14 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         }
     }
 
-    private OutputConfiguration previewConfiguration;
-    private OutputConfiguration recordConfiguration;
-    private OutputConfiguration snapshotConfiguration;
-
-    private void createVideoPreview()  {
+    private void createVideoPreview() {
         if(!resumed || !hasSurface) return;
 
         try {
             prepareMediaRecorder();
             previewCaptureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
-            previewView.getSurfaceTexture().setDefaultBufferSize(1920, 1080);
-            previewSurface = new Surface(previewView.getSurfaceTexture());
+            previewView.getSurfaceTexture().setDefaultBufferSize(1280, 720);
+            previewSurface = new Surface(stPreview);
 
 //            recordSurface = persistentSurface; // TODO: PersistentSurface not recording video in some devices
             recordSurface = mMediaRecorder.getSurface();
@@ -254,25 +249,26 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
             previewCaptureRequestBuilder.addTarget(previewSurface);
 
+            previewCaptureRequestBuilder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, new Range<>(120,120));
+
             previewCaptureRequestBuilder.set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE
                     ,CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON);
 
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
                 OutputConfiguration previewConfiguration  = new OutputConfiguration(previewSurface);
                 OutputConfiguration recordConfiguration   = new OutputConfiguration(recordSurface);
-                OutputConfiguration snapshotConfiguration = new OutputConfiguration(imageReader.getSurface());
 
 //                previewConfiguration.enableSurfaceSharing();
 
-                SessionConfiguration sessionConfiguration = new SessionConfiguration(SessionConfiguration.SESSION_REGULAR
-                        , Arrays.asList(previewConfiguration,recordConfiguration,snapshotConfiguration)
+                SessionConfiguration sessionConfiguration = new SessionConfiguration(SessionConfiguration.SESSION_HIGH_SPEED
+                        , Arrays.asList(previewConfiguration,recordConfiguration)
                         , bgExecutor
                         , streamlineCaptureSessionCallback);
 
                 cameraDevice.createCaptureSession(sessionConfiguration);
             }
             else{
-                cameraDevice.createCaptureSession(Arrays.asList(previewSurface, recordSurface, imageReader.getSurface())
+                cameraDevice.createConstrainedHighSpeedCaptureSession(Arrays.asList(previewSurface, recordSurface)
                         ,streamlineCaptureSessionCallback,null);
             }
 
@@ -286,9 +282,11 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     CameraCaptureSession.StateCallback streamlineCaptureSessionCallback = new CameraCaptureSession.StateCallback() {
         @Override
         public void onConfigured(@NonNull CameraCaptureSession session) {
-            cameraCaptureSession = session;
+            cameraCaptureSession = (CameraConstrainedHighSpeedCaptureSession) session;
             try {
-                cameraCaptureSession.setRepeatingRequest(previewCaptureRequestBuilder.build(), null,mHandler);
+                cameraCaptureSession.setRepeatingBurst(
+                        cameraCaptureSession.createHighSpeedRequestList(previewCaptureRequestBuilder.build()),null,mHandler);
+
                 if(isVRecording){
                     Log.e(TAG, "onConfigured: Preparing media Recorder");
                 }
@@ -308,19 +306,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         mMediaRecorder.start();
     }
 
-    private void captureImage() {
-        try {
-            captureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_VIDEO_SNAPSHOT);
-            captureRequestBuilder.set(CaptureRequest.JPEG_QUALITY,(byte) 100);
-            captureRequestBuilder.set(CaptureRequest.JPEG_ORIENTATION,getJpegOrientation());
-            captureRequestBuilder.addTarget(imageReader.getSurface());
-
-            cameraCaptureSession.capture(captureRequestBuilder.build(), null, mHandler);
-        } catch (CameraAccessException e) {
-            e.printStackTrace();
-        }
-    }
-
     private void closeCamera() {
         if (null != cameraDevice) {
             cameraDevice.close();
@@ -331,31 +316,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             imageReader = null;
         }
     }
-
-
-    ImageReader.OnImageAvailableListener snapshotImageCallback = imageReader -> {
-        Log.e(TAG, "onImageAvailable: received snapshot image data");
-        Completable.fromRunnable(new ImageSaverThread(this,
-                        imageReader.acquireLatestImage(), "0", getContentResolver()))
-                .subscribeOn(Schedulers.computation())
-                .subscribe(new CompletableObserver() {
-                    @Override
-                    public void onSubscribe(@NonNull Disposable d) {
-
-                    }
-
-                    @Override
-                    public void onError(@NonNull Throwable e) {
-                        Toast.makeText(MainActivity.this, "Could Not Save Image", Toast.LENGTH_SHORT).show();
-                    }
-
-                    @Override
-                    public void onComplete() {
-//                        displayLatestThumbnail();
-                    }
-                });
-
-    };
 
     private CameraDevice.StateCallback cameraDeviceStateCallback = new CameraDevice.StateCallback() {
         @Override
@@ -481,7 +441,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         }
         else if (id == R.id.thumbnail_snapshot) {
             if(isVRecording){
-                captureImage();
+
             }
             else {
                 if(fileUri == null){
