@@ -26,6 +26,7 @@ public class ImageSaverThread implements Runnable {
     public static Uri staticUri;
     private final Context context;
 
+    private static int burst=0;
     public ImageSaverThread(Context context, Image image, String cameraId, ContentResolver contentResolver) {
         this.context = context;
         this.mImage = image;
@@ -45,12 +46,12 @@ public class ImageSaverThread implements Runnable {
         String currentDateandTime = sdf.format(new Date());
 
         File file = new File(Environment.getExternalStorageDirectory()+"//DCIM//Camera//"
-                ,"Camera2_starter_"+currentDateandTime+cameraId+".jpg");
+                ,"Camera2_starter_"+currentDateandTime+cameraId+"_BURST000"+ burst+".jpg");
 
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             values.put(MediaStore.MediaColumns.RELATIVE_PATH, "DCIM/Camera/");
-            values.put(MediaStore.Images.Media.DISPLAY_NAME, "Camera2_starter_"+currentDateandTime+cameraId+".jpg");
+            values.put(MediaStore.Images.Media.DISPLAY_NAME, "Camera2_starter_"+currentDateandTime+cameraId+"_BURST00"+ ++burst+".jpg");
             values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpg");
             values.put( MediaStore.MediaColumns.DATE_TAKEN, System.currentTimeMillis() );
             values.put(MediaStore.Images.Media.TITLE, "Image.jpg");

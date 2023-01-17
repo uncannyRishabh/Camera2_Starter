@@ -19,6 +19,7 @@ import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CaptureRequest;
+import android.hardware.camera2.TotalCaptureResult;
 import android.hardware.camera2.params.OutputConfiguration;
 import android.hardware.camera2.params.SessionConfiguration;
 import android.media.ImageReader;
@@ -71,16 +72,15 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private CameraCaptureSession cameraCaptureSession;
     private CameraCharacteristics cameraCharacteristics;
     private CaptureRequest.Builder captureRequestBuilder;
-    private CaptureRequest.Builder previewCaptureRequestBuilder;
+    private CaptureRequest.Builder previewRequestBuilder;
     private ImageReader imageReader;
-
     private MediaActionSound sound = new MediaActionSound();
 
     private Handler cameraHandler;
     private Handler mHandler = new Handler();
     private HandlerThread mBackgroundThread;
 
-    private long longPressTime;
+    private boolean isLongPressed = false;
     private boolean resumed = false, hasSurface = false;
     private List<Surface> surfaceList = new ArrayList<>();
 
@@ -119,42 +119,33 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         });
 
         capture.setOnClickListener(this);
-        capture.setOnTouchListener((v, event) -> {
-            int e = event.getActionMasked();
-            switch (e){
-                case MotionEvent.ACTION_DOWN:{
-                    longPressTime = System.currentTimeMillis();
-                    mHandler.postDelayed(burst,500);
-                    break;
-                }
-                case MotionEvent.ACTION_UP:{
-                    if(System.currentTimeMillis()-longPressTime > 500){
-                        Log.e(TAG, "onCreate: LONG PRESSED");
-                        // send stop capture message to handler
-                        return true;
-                    }
-                    else{
-                        mHandler.removeCallbacks(burst);
-                    }
-                    break;
-                }
-            }
+
+        capture.setOnLongClickListener(v -> {
+            isLongPressed = true;
+            //Start Repeating Burst
+            Log.e(TAG, "onCreate: Start Repeating Burst");
             return false;
         });
 
-//        capture.setOnLongClickListener(new View.OnLongClickListener() {
-//            @Override
-//            public boolean onLongClick(View v) {
-//                return false;
-//            }
-//
-//
-//        });
+        capture.setOnTouchListener((v, event) -> {
+            if(event.getActionMasked() == MotionEvent.ACTION_UP && isLongPressed){
+                onLongPressedUp();
+                return true;
+            }
+            return false;
+        });
 
         thumbPreview.setOnClickListener(this);
 
         requestPermissions();
     }
+
+    private void onLongPressedUp(){
+        //Stop Repeating Burst
+        isLongPressed = false;
+        Log.e(TAG, "onLongPressedUp: Stop Repeating Burst");
+    }
+
 
     private void requestPermissions() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED ||
@@ -179,11 +170,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
     }
 
-    Runnable burst = () ->{
-        captureBurstImage();
-        Log.e(TAG, "Burst: Capture");
-    };
-
     private void openCamera(){
         if(!resumed || !hasSurface) return;
 
@@ -199,7 +185,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             stPreview.setDefaultBufferSize(1440, 1080);
 
             //set capture resolution
-            imageReader = ImageReader.newInstance(4000, 3000, ImageFormat.JPEG, 5);
+            imageReader = ImageReader.newInstance(4000, 3000, ImageFormat.JPEG, 30);
             imageReader.setOnImageAvailableListener(snapshotImageCallback, cameraHandler);
 
             surfaceList.clear();
@@ -242,27 +228,30 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             captureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
             captureRequestBuilder.set(CaptureRequest.JPEG_QUALITY,(byte) 100);
             captureRequestBuilder.set(CaptureRequest.JPEG_ORIENTATION,getJpegOrientation());
-            captureRequestBuilder.addTarget(surfaceList.get(1));
+            captureRequestBuilder.set(CaptureRequest.CONTROL_AF_MODE,CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
 
-            captureRequestBuilder.set(CaptureRequest.EDGE_MODE,
-                    CaptureRequest.EDGE_MODE_OFF);
-            captureRequestBuilder.set(
-                    CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE,
-                    CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON);
-            captureRequestBuilder.set(
-                    CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE,
-                    CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE_OFF);
-            captureRequestBuilder.set(CaptureRequest.NOISE_REDUCTION_MODE,
-                    CaptureRequest.NOISE_REDUCTION_MODE_OFF);
-            captureRequestBuilder.set(CaptureRequest.CONTROL_AF_TRIGGER,
-                    CaptureRequest.CONTROL_AF_TRIGGER_CANCEL);
+            captureRequestBuilder.set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_OFF);
+            captureRequestBuilder.set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON);
+            captureRequestBuilder.set(CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE, CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE_OFF);
 
             captureRequestBuilder.set(CaptureRequest.CONTROL_AE_LOCK, true);
             captureRequestBuilder.set(CaptureRequest.CONTROL_AWB_LOCK, true);
 
-            cameraCaptureSession.captureBurst(Collections.singletonList(captureRequestBuilder.build()), null, mHandler);
+            captureRequestBuilder.addTarget(surfaceList.get(1));
 
-            sound.play(MediaActionSound.SHUTTER_CLICK);
+            cameraCaptureSession.setRepeatingBurst(Collections.singletonList(captureRequestBuilder.build())
+                , new CameraCaptureSession.CaptureCallback() {
+                    @Override
+                    public void onCaptureStarted(@NonNull CameraCaptureSession session, @NonNull CaptureRequest request, long timestamp, long frameNumber) {
+                        super.onCaptureStarted(session, request, timestamp, frameNumber);
+                        sound.play(MediaActionSound.SHUTTER_CLICK);
+                    }
+
+                    @Override
+                    public void onCaptureCompleted(@NonNull CameraCaptureSession session, @NonNull CaptureRequest request, @NonNull TotalCaptureResult result) {
+                        super.onCaptureCompleted(session, request, result);
+                    }
+            }, mHandler);
         } catch (CameraAccessException e) {
             e.printStackTrace();
         }
@@ -298,9 +287,13 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
                     @Override
                     public void onComplete() {
-                        displayLatestImage();
+//                        displayLatestImage();
                     }
                 });
+
+//        try (ImageWriter iw = ImageWriter.newInstance(surfaceList.get(1), 2)) {
+//
+//        }
 
     };
 
@@ -355,11 +348,10 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             cameraCaptureSession = session;
 
             try {
-                previewCaptureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
-                previewCaptureRequestBuilder.addTarget(surfaceList.get(0));
-                previewCaptureRequestBuilder.set(CaptureRequest.JPEG_ORIENTATION, ORIENTATIONS.get(0));
+                previewRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
+                previewRequestBuilder.addTarget(surfaceList.get(0));
 
-                cameraCaptureSession.setRepeatingRequest(previewCaptureRequestBuilder.build(), null, null);
+                cameraCaptureSession.setRepeatingRequest(previewRequestBuilder.build(), null, null);
 
             } catch (CameraAccessException e) {
                 e.printStackTrace();
