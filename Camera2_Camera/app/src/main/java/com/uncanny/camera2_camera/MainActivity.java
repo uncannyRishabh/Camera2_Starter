@@ -7,6 +7,7 @@ import androidx.core.content.ContextCompat;
 import androidx.core.os.HandlerCompat;
 
 import android.Manifest;
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -28,6 +29,7 @@ import android.os.HandlerThread;
 import android.provider.MediaStore;
 import android.util.Log;
 import android.util.SparseIntArray;
+import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
@@ -36,6 +38,7 @@ import android.widget.Toast;
 import com.google.android.material.imageview.ShapeableImageView;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers;
@@ -77,9 +80,11 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private Handler mHandler = new Handler();
     private HandlerThread mBackgroundThread;
 
+    private long longPressTime;
     private boolean resumed = false, hasSurface = false;
     private List<Surface> surfaceList = new ArrayList<>();
 
+    @SuppressLint("ClickableViewAccessibility")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -114,6 +119,38 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         });
 
         capture.setOnClickListener(this);
+        capture.setOnTouchListener((v, event) -> {
+            int e = event.getActionMasked();
+            switch (e){
+                case MotionEvent.ACTION_DOWN:{
+                    longPressTime = System.currentTimeMillis();
+                    mHandler.postDelayed(burst,500);
+                    break;
+                }
+                case MotionEvent.ACTION_UP:{
+                    if(System.currentTimeMillis()-longPressTime > 500){
+                        Log.e(TAG, "onCreate: LONG PRESSED");
+                        // send stop capture message to handler
+                        return true;
+                    }
+                    else{
+                        mHandler.removeCallbacks(burst);
+                    }
+                    break;
+                }
+            }
+            return false;
+        });
+
+//        capture.setOnLongClickListener(new View.OnLongClickListener() {
+//            @Override
+//            public boolean onLongClick(View v) {
+//                return false;
+//            }
+//
+//
+//        });
+
         thumbPreview.setOnClickListener(this);
 
         requestPermissions();
@@ -142,7 +179,10 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
     }
 
-
+    Runnable burst = () ->{
+        captureBurstImage();
+        Log.e(TAG, "Burst: Capture");
+    };
 
     private void openCamera(){
         if(!resumed || !hasSurface) return;
@@ -189,6 +229,38 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             captureRequestBuilder.addTarget(surfaceList.get(1));
 
             cameraCaptureSession.capture(captureRequestBuilder.build(), null, mHandler);
+
+            sound.play(MediaActionSound.SHUTTER_CLICK);
+        } catch (CameraAccessException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void captureBurstImage(){
+        Log.e(TAG, "captureBurstImage: Capture");
+        try {
+            captureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
+            captureRequestBuilder.set(CaptureRequest.JPEG_QUALITY,(byte) 100);
+            captureRequestBuilder.set(CaptureRequest.JPEG_ORIENTATION,getJpegOrientation());
+            captureRequestBuilder.addTarget(surfaceList.get(1));
+
+            captureRequestBuilder.set(CaptureRequest.EDGE_MODE,
+                    CaptureRequest.EDGE_MODE_OFF);
+            captureRequestBuilder.set(
+                    CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE,
+                    CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON);
+            captureRequestBuilder.set(
+                    CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE,
+                    CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE_OFF);
+            captureRequestBuilder.set(CaptureRequest.NOISE_REDUCTION_MODE,
+                    CaptureRequest.NOISE_REDUCTION_MODE_OFF);
+            captureRequestBuilder.set(CaptureRequest.CONTROL_AF_TRIGGER,
+                    CaptureRequest.CONTROL_AF_TRIGGER_CANCEL);
+
+            captureRequestBuilder.set(CaptureRequest.CONTROL_AE_LOCK, true);
+            captureRequestBuilder.set(CaptureRequest.CONTROL_AWB_LOCK, true);
+
+            cameraCaptureSession.captureBurst(Collections.singletonList(captureRequestBuilder.build()), null, mHandler);
 
             sound.play(MediaActionSound.SHUTTER_CLICK);
         } catch (CameraAccessException e) {
@@ -373,6 +445,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         resumed = true;
         startBackgroundThread();
         openCamera();
+        // Handle before permission
         displayLatestImage();
     }
 
