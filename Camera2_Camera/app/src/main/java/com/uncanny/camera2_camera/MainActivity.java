@@ -1,13 +1,8 @@
 package com.uncanny.camera2_camera;
 
-import androidx.annotation.NonNull;
-import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
-import androidx.core.os.HandlerCompat;
-
 import android.Manifest;
 import android.annotation.SuppressLint;
+import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -22,9 +17,13 @@ import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.TotalCaptureResult;
 import android.hardware.camera2.params.OutputConfiguration;
 import android.hardware.camera2.params.SessionConfiguration;
+import android.media.Image;
 import android.media.ImageReader;
 import android.media.MediaActionSound;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.provider.MediaStore;
@@ -36,11 +35,28 @@ import android.view.TextureView;
 import android.view.View;
 import android.widget.Toast;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.WorkerThread;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+import androidx.core.os.HandlerCompat;
+
 import com.google.android.material.imageview.ShapeableImageView;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.ByteBuffer;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers;
 import io.reactivex.rxjava3.core.Completable;
@@ -76,19 +92,24 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private ImageReader imageReader;
     private MediaActionSound sound = new MediaActionSound();
 
+    private Handler mHandler;
     private Handler cameraHandler;
-    private Handler mHandler = new Handler();
     private HandlerThread mBackgroundThread;
+    private HandlerThread bBackgroundThread;
+    private Executor bgExecutor = Executors.newSingleThreadExecutor();
 
     private boolean isLongPressed = false;
     private boolean resumed = false, hasSurface = false;
     private List<Surface> surfaceList = new ArrayList<>();
+    private ArrayBlockingQueue<Image> imageQueue = new ArrayBlockingQueue<>(10);
 
     @SuppressLint("ClickableViewAccessibility")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+
+        mHandler = new Handler(getMainLooper());
 
         capture = findViewById(R.id.capture);
         thumbPreview = findViewById(R.id.thumbnail);
@@ -98,7 +119,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             public void onSurfaceTextureAvailable(@NonNull SurfaceTexture surface, int width, int height) {
                 stPreview = surface;
                 hasSurface = true;
-                openCamera();
+                cameraHandler.post(()->openCamera());
             }
 
             @Override
@@ -123,13 +144,24 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         capture.setOnLongClickListener(v -> {
             isLongPressed = true;
             //Start Repeating Burst
+            cameraHandler.post(this::captureBurstImage);
             Log.e(TAG, "onCreate: Start Repeating Burst");
             return false;
         });
 
         capture.setOnTouchListener((v, event) -> {
             if(event.getActionMasked() == MotionEvent.ACTION_UP && isLongPressed){
-                onLongPressedUp();
+                //Stop Repeating Burst
+                isLongPressed = false;
+//                try {
+//                    cameraCaptureSession.stopRepeating();
+//                } catch (CameraAccessException e) {
+//                    throw new RuntimeException(e);
+//                }
+                cameraHandler.post(this::createPreview);
+                displayLatestImage();
+                Log.e(TAG, "onLongPressedUp: Stop Repeating Burst");
+
                 return true;
             }
             return false;
@@ -139,13 +171,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
         requestPermissions();
     }
-
-    private void onLongPressedUp(){
-        //Stop Repeating Burst
-        isLongPressed = false;
-        Log.e(TAG, "onLongPressedUp: Stop Repeating Burst");
-    }
-
 
     private void requestPermissions() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED ||
@@ -185,8 +210,8 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             stPreview.setDefaultBufferSize(1440, 1080);
 
             //set capture resolution
-            imageReader = ImageReader.newInstance(4000, 3000, ImageFormat.JPEG, 30);
-            imageReader.setOnImageAvailableListener(snapshotImageCallback, cameraHandler);
+            imageReader = ImageReader.newInstance(4000, 3000, ImageFormat.JPEG, 4);
+            imageReader.setOnImageAvailableListener(new OnJpegImageAvailableListener(), cameraHandler);
 
             surfaceList.clear();
             surfaceList.add(new Surface(stPreview));
@@ -197,12 +222,27 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                     requestPermissions();
                     return;
                 }
-                cameraManager.openCamera("0", cameraDeviceStateCallback, cameraHandler);
+                cameraManager.openCamera("0", cameraDeviceStateCallback, mHandler);
             } catch(CameraAccessException e) {
                 Log.e(TAG, "openCamera: open failed: " + e.getMessage());
             }
         }
         catch (CameraAccessException e){
+            e.printStackTrace();
+        }
+    }
+
+    private void createPreview(){
+        try {
+            previewRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
+            captureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
+
+            previewRequestBuilder.addTarget(surfaceList.get(0));
+            captureRequestBuilder.addTarget(surfaceList.get(0));
+
+            cameraCaptureSession.setRepeatingRequest(previewRequestBuilder.build(), null, mHandler);
+
+        } catch (CameraAccessException e) {
             e.printStackTrace();
         }
     }
@@ -225,26 +265,26 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private void captureBurstImage(){
         Log.e(TAG, "captureBurstImage: Capture");
         try {
-            captureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
+//            captureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
             captureRequestBuilder.set(CaptureRequest.JPEG_QUALITY,(byte) 100);
             captureRequestBuilder.set(CaptureRequest.JPEG_ORIENTATION,getJpegOrientation());
             captureRequestBuilder.set(CaptureRequest.CONTROL_AF_MODE,CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
 
             captureRequestBuilder.set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_OFF);
-            captureRequestBuilder.set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON);
-            captureRequestBuilder.set(CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE, CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE_OFF);
+//            captureRequestBuilder.set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON);
+//            captureRequestBuilder.set(CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE, CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE_OFF);
 
-            captureRequestBuilder.set(CaptureRequest.CONTROL_AE_LOCK, true);
-            captureRequestBuilder.set(CaptureRequest.CONTROL_AWB_LOCK, true);
+//            captureRequestBuilder.set(CaptureRequest.CONTROL_AE_LOCK, true);
+//            captureRequestBuilder.set(CaptureRequest.CONTROL_AWB_LOCK, true);
 
             captureRequestBuilder.addTarget(surfaceList.get(1));
 
-            cameraCaptureSession.setRepeatingBurst(Collections.singletonList(captureRequestBuilder.build())
+            cameraCaptureSession.setRepeatingRequest(captureRequestBuilder.build()
                 , new CameraCaptureSession.CaptureCallback() {
                     @Override
                     public void onCaptureStarted(@NonNull CameraCaptureSession session, @NonNull CaptureRequest request, long timestamp, long frameNumber) {
                         super.onCaptureStarted(session, request, timestamp, frameNumber);
-                        sound.play(MediaActionSound.SHUTTER_CLICK);
+                        cameraHandler.post(() -> sound.play(MediaActionSound.SHUTTER_CLICK));
                     }
 
                     @Override
@@ -269,32 +309,112 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     }
 
 
-    ImageReader.OnImageAvailableListener snapshotImageCallback = imageReader -> {
-        Log.e(TAG, "onImageAvailable: received snapshot image data");
-        Completable.fromRunnable(new ImageSaverThread(this,
-                        imageReader.acquireLatestImage(), "0", getContentResolver()))
-                .subscribeOn(Schedulers.computation())
-                .subscribe(new CompletableObserver() {
-                    @Override
-                    public void onSubscribe(@NonNull Disposable d) {
+    private class OnJpegImageAvailableListener implements ImageReader.OnImageAvailableListener {
+        private DateFormat dateFormat = new SimpleDateFormat("yyyyMMddHHmmssSSS", Locale.getDefault());
+        private String cameraDir = Environment.getExternalStorageDirectory()+"//DCIM//Camera//";
 
-                    }
+        @WorkerThread
+        @Override
+        public void onImageAvailable(ImageReader imageReader) {
+            Image image = imageReader.acquireNextImage();
+            if (image != null) {
+                try {
+                    Image.Plane[] planes = image.getPlanes();
+                    ByteBuffer jpegByteBuffer = planes[0].getBuffer();
+                    byte[] jpegByteArray = new byte[jpegByteBuffer.remaining()];
+                    jpegByteBuffer.get(jpegByteArray);
+                    int width = image.getWidth();
+                    int height = image.getHeight();
+                    bgExecutor.execute(() -> {
+                        long date = System.currentTimeMillis();
+                        String title = "Camera2_starter_" + dateFormat.format(date);
+                        String displayName = title + ".jpeg";
+                        String path = cameraDir + "/" + displayName;
 
-                    @Override
-                    public void onError(@NonNull Throwable e) {
-                        Toast.makeText(MainActivity.this, "Could Not Save Image", Toast.LENGTH_SHORT).show();
-                    }
+                        File file = new File(path);
 
-                    @Override
-                    public void onComplete() {
-//                        displayLatestImage();
-                    }
-                });
+                        ContentValues values = new ContentValues();
+                        values.put(MediaStore.MediaColumns.RELATIVE_PATH, "DCIM/Camera/");
+                        values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpg");
+                        values.put(MediaStore.Images.ImageColumns.TITLE, title);
+                        values.put(MediaStore.Images.ImageColumns.DISPLAY_NAME, displayName);
+                        values.put(MediaStore.Images.ImageColumns.DATA, path);
+                        values.put(MediaStore.Images.ImageColumns.DATE_TAKEN, date);
+                        values.put(MediaStore.Images.ImageColumns.WIDTH, width);
+                        values.put(MediaStore.Images.ImageColumns.HEIGHT, height);
+                        Uri u = getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+                        saveByteBuffer(jpegByteArray,file, u,image);
+                    });
+                } catch (Exception ignored) {
 
-//        try (ImageWriter iw = ImageWriter.newInstance(surfaceList.get(1), 2)) {
+                }
+            }
+        }
+    }
+
+    private synchronized void saveByteBuffer(byte[] bytes, File file, Uri uri, Image mImage) {
+        try {
+            if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                OutputStream outputStream = getContentResolver().openOutputStream(uri);
+                outputStream.write(bytes);
+                outputStream.close();
+            }
+            else {
+                try{
+                    FileOutputStream fos = new FileOutputStream(file);
+                    fos.write(bytes);
+                    fos.close();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        finally {
+            mImage.close();
+        }
+    }
+
+
+
+    ImageReader.OnImageAvailableListener snapshotImageCallback = new ImageReader.OnImageAvailableListener() {
+
+        @Override
+        @WorkerThread
+        public void onImageAvailable(ImageReader reader) {
+//            if(isLongPressed){
+//                Log.e(TAG, "onImageAvailable: received BURST snapshot image data");
+            SerialExecutor serialExecutor = new SerialExecutor(bgExecutor);
+            serialExecutor.execute(new ImageSaverThread(MainActivity.this, imageReader.acquireLatestImage()
+                    , "0", getContentResolver()));
+//            Completable.fromRunnable(new ImageSaverThread(this, imageReader.acquireLatestImage()
+//                            , "0", getContentResolver()))
+//                    .subscribeOn(Schedulers.io()).subscribe();
+//            }
+//            else{
+//                Log.e(TAG, "onImageAvailable: received snapshot image data");
+//                Completable.fromRunnable(new ImageSaverThread(MainActivity.this,
+//                                imageReader.acquireLatestImage(), "0", getContentResolver()))
+//                        .subscribeOn(Schedulers.computation())
+//                        .subscribe(new CompletableObserver() {
+//                            @Override
+//                            public void onSubscribe(@NonNull Disposable d) {
 //
-//        }
-
+//                            }
+//
+//                            @Override
+//                            public void onError(@NonNull Throwable e) {
+////                            Toast.makeText(MainActivity.this, "Could Not Save Image", Toast.LENGTH_SHORT).show();
+//                            }
+//
+//                            @Override
+//                            public void onComplete() {
+////                            displayLatestImage();
+//                            }
+//                        });
+//            }
+        }
     };
 
     private CameraDevice.StateCallback cameraDeviceStateCallback = new CameraDevice.StateCallback() {
@@ -319,15 +439,13 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             }
             else{
                 try {
-                    cameraDevice.createCaptureSession(surfaceList,stateCallback, cameraHandler);
+                    cameraDevice.createCaptureSession(surfaceList,stateCallback, mHandler);
                 } catch (CameraAccessException e) {
                     e.printStackTrace();
                 }
             }
 
-            runOnUiThread(() -> {
-                previewView.setAspectRatio(1080,1440);
-            });
+            runOnUiThread(() -> previewView.setAspectRatio(1080,1440));
         }
 
         @Override
@@ -346,17 +464,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         @Override
         public void onConfigured(@NonNull CameraCaptureSession session) {
             cameraCaptureSession = session;
-
-            try {
-                previewRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
-                previewRequestBuilder.addTarget(surfaceList.get(0));
-
-                cameraCaptureSession.setRepeatingRequest(previewRequestBuilder.build(), null, null);
-
-            } catch (CameraAccessException e) {
-                e.printStackTrace();
-            }
-
+            createPreview();
         }
 
         @Override
@@ -389,8 +497,11 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
     protected void startBackgroundThread() {
         mBackgroundThread = new HandlerThread("Camera Background");
+        bBackgroundThread = new HandlerThread("Camera Background");
         mBackgroundThread.start();
-        cameraHandler = HandlerCompat.createAsync(mBackgroundThread.getLooper());
+        bBackgroundThread.start();
+        cameraHandler = new Handler(mBackgroundThread.getLooper());
+        mHandler = new Handler(mBackgroundThread.getLooper());
     }
 
     protected void stopBackgroundThread() {
@@ -402,6 +513,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         try {
             mBackgroundThread.join();
             cameraHandler = null;
+            mHandler = null;
             mBackgroundThread = null;
             cameraManager = null;
         } catch (InterruptedException e) {
@@ -445,6 +557,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     protected void onPause() {
         super.onPause();
         resumed = false;
+        if(imageReader != null) imageReader.close();
     }
 
     @Override
