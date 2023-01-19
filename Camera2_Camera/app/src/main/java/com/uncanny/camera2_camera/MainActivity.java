@@ -14,6 +14,7 @@ import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CaptureRequest;
+import android.hardware.camera2.CaptureResult;
 import android.hardware.camera2.TotalCaptureResult;
 import android.hardware.camera2.params.OutputConfiguration;
 import android.hardware.camera2.params.SessionConfiguration;
@@ -55,8 +56,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
 
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers;
 import io.reactivex.rxjava3.core.Completable;
@@ -101,7 +104,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private boolean isLongPressed = false;
     private boolean resumed = false, hasSurface = false;
     private List<Surface> surfaceList = new ArrayList<>();
-    private ArrayBlockingQueue<Image> imageQueue = new ArrayBlockingQueue<>(10);
+//    private BlockingQueue<CaptureRequest> captureResults = new LinkedBlockingQueue<>();
 
     @SuppressLint("ClickableViewAccessibility")
     @Override
@@ -153,13 +156,8 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             if(event.getActionMasked() == MotionEvent.ACTION_UP && isLongPressed){
                 //Stop Repeating Burst
                 isLongPressed = false;
-//                try {
-//                    cameraCaptureSession.stopRepeating();
-//                } catch (CameraAccessException e) {
-//                    throw new RuntimeException(e);
-//                }
                 cameraHandler.post(this::createPreview);
-                displayLatestImage();
+                cameraHandler.post(this::displayLatestImage);
                 Log.e(TAG, "onLongPressedUp: Stop Repeating Burst");
 
                 return true;
@@ -210,7 +208,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             stPreview.setDefaultBufferSize(1440, 1080);
 
             //set capture resolution
-            imageReader = ImageReader.newInstance(4000, 3000, ImageFormat.JPEG, 4);
+            imageReader = ImageReader.newInstance(4000, 3000, ImageFormat.JPEG, 5);
             imageReader.setOnImageAvailableListener(new OnJpegImageAvailableListener(), cameraHandler);
 
             surfaceList.clear();
@@ -316,9 +314,9 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         @WorkerThread
         @Override
         public void onImageAvailable(ImageReader imageReader) {
-            Image image = imageReader.acquireNextImage();
-            if (image != null) {
-                try {
+            Log.e(TAG, "onImageAvailable: "+isLongPressed);
+            try(Image image = imageReader.acquireNextImage()) {
+                if (image != null ) {
                     Image.Plane[] planes = image.getPlanes();
                     ByteBuffer jpegByteBuffer = planes[0].getBuffer();
                     byte[] jpegByteArray = new byte[jpegByteBuffer.remaining()];
@@ -334,7 +332,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                         File file = new File(path);
 
                         ContentValues values = new ContentValues();
-                        values.put(MediaStore.MediaColumns.RELATIVE_PATH, "DCIM/Camera/");
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) values.put(MediaStore.MediaColumns.RELATIVE_PATH, "DCIM/Camera/");
                         values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpg");
                         values.put(MediaStore.Images.ImageColumns.TITLE, title);
                         values.put(MediaStore.Images.ImageColumns.DISPLAY_NAME, displayName);
@@ -343,12 +341,11 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                         values.put(MediaStore.Images.ImageColumns.WIDTH, width);
                         values.put(MediaStore.Images.ImageColumns.HEIGHT, height);
                         Uri u = getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
-                        saveByteBuffer(jpegByteArray,file, u,image);
+                        saveByteBuffer(jpegByteArray, file, u, image);
                     });
-                } catch (Exception ignored) {
-
                 }
             }
+            catch (Exception e) { e.printStackTrace(); }
         }
     }
 
@@ -375,47 +372,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             mImage.close();
         }
     }
-
-
-
-    ImageReader.OnImageAvailableListener snapshotImageCallback = new ImageReader.OnImageAvailableListener() {
-
-        @Override
-        @WorkerThread
-        public void onImageAvailable(ImageReader reader) {
-//            if(isLongPressed){
-//                Log.e(TAG, "onImageAvailable: received BURST snapshot image data");
-            SerialExecutor serialExecutor = new SerialExecutor(bgExecutor);
-            serialExecutor.execute(new ImageSaverThread(MainActivity.this, imageReader.acquireLatestImage()
-                    , "0", getContentResolver()));
-//            Completable.fromRunnable(new ImageSaverThread(this, imageReader.acquireLatestImage()
-//                            , "0", getContentResolver()))
-//                    .subscribeOn(Schedulers.io()).subscribe();
-//            }
-//            else{
-//                Log.e(TAG, "onImageAvailable: received snapshot image data");
-//                Completable.fromRunnable(new ImageSaverThread(MainActivity.this,
-//                                imageReader.acquireLatestImage(), "0", getContentResolver()))
-//                        .subscribeOn(Schedulers.computation())
-//                        .subscribe(new CompletableObserver() {
-//                            @Override
-//                            public void onSubscribe(@NonNull Disposable d) {
-//
-//                            }
-//
-//                            @Override
-//                            public void onError(@NonNull Throwable e) {
-////                            Toast.makeText(MainActivity.this, "Could Not Save Image", Toast.LENGTH_SHORT).show();
-//                            }
-//
-//                            @Override
-//                            public void onComplete() {
-////                            displayLatestImage();
-//                            }
-//                        });
-//            }
-        }
-    };
 
     private CameraDevice.StateCallback cameraDeviceStateCallback = new CameraDevice.StateCallback() {
         @Override
@@ -474,6 +430,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     };
 
 
+    @WorkerThread
     private void displayLatestImage() {
         LatestThumbnailGeneratorThread ltg;
         Completable.fromRunnable(ltg = new LatestThumbnailGeneratorThread(this))
