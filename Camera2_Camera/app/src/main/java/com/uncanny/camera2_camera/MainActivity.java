@@ -156,7 +156,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             if(event.getActionMasked() == MotionEvent.ACTION_UP && isLongPressed){
                 //Stop Repeating Burst
                 isLongPressed = false;
-                cameraHandler.post(this::createPreview);
+                cameraHandler.postAtFrontOfQueue(this::createPreview);
                 cameraHandler.post(this::displayLatestImage);
                 Log.e(TAG, "onLongPressedUp: Stop Repeating Burst");
 
@@ -208,7 +208,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             stPreview.setDefaultBufferSize(1440, 1080);
 
             //set capture resolution
-            imageReader = ImageReader.newInstance(4000, 3000, ImageFormat.JPEG, 5);
+            imageReader = ImageReader.newInstance(4000, 3000, ImageFormat.JPEG, 3);
             imageReader.setOnImageAvailableListener(new OnJpegImageAvailableListener(), cameraHandler);
 
             surfaceList.clear();
@@ -266,14 +266,14 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 //            captureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
             captureRequestBuilder.set(CaptureRequest.JPEG_QUALITY,(byte) 100);
             captureRequestBuilder.set(CaptureRequest.JPEG_ORIENTATION,getJpegOrientation());
-            captureRequestBuilder.set(CaptureRequest.CONTROL_AF_MODE,CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
+//            captureRequestBuilder.set(CaptureRequest.CONTROL_AF_MODE,CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
 
             captureRequestBuilder.set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_OFF);
 //            captureRequestBuilder.set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON);
 //            captureRequestBuilder.set(CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE, CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE_OFF);
 
-//            captureRequestBuilder.set(CaptureRequest.CONTROL_AE_LOCK, true);
-//            captureRequestBuilder.set(CaptureRequest.CONTROL_AWB_LOCK, true);
+            captureRequestBuilder.set(CaptureRequest.CONTROL_AE_LOCK, true);
+            captureRequestBuilder.set(CaptureRequest.CONTROL_AWB_LOCK, true);
 
             captureRequestBuilder.addTarget(surfaceList.get(1));
 
@@ -317,12 +317,9 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             Log.e(TAG, "onImageAvailable: "+isLongPressed);
             try(Image image = imageReader.acquireNextImage()) {
                 if (image != null ) {
-                    Image.Plane[] planes = image.getPlanes();
-                    ByteBuffer jpegByteBuffer = planes[0].getBuffer();
+                    ByteBuffer jpegByteBuffer = image.getPlanes()[0].getBuffer();
                     byte[] jpegByteArray = new byte[jpegByteBuffer.remaining()];
                     jpegByteBuffer.get(jpegByteArray);
-                    int width = image.getWidth();
-                    int height = image.getHeight();
                     bgExecutor.execute(() -> {
                         long date = System.currentTimeMillis();
                         String title = "Camera2_starter_" + dateFormat.format(date);
@@ -338,10 +335,8 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                         values.put(MediaStore.Images.ImageColumns.DISPLAY_NAME, displayName);
                         values.put(MediaStore.Images.ImageColumns.DATA, path);
                         values.put(MediaStore.Images.ImageColumns.DATE_TAKEN, date);
-                        values.put(MediaStore.Images.ImageColumns.WIDTH, width);
-                        values.put(MediaStore.Images.ImageColumns.HEIGHT, height);
                         Uri u = getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
-                        saveByteBuffer(jpegByteArray, file, u, image);
+                        saveByteBuffer(jpegByteArray, file, u);
                     });
                 }
             }
@@ -349,27 +344,21 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         }
     }
 
-    private synchronized void saveByteBuffer(byte[] bytes, File file, Uri uri, Image mImage) {
-        try {
-            if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                OutputStream outputStream = getContentResolver().openOutputStream(uri);
+    private void saveByteBuffer(byte[] bytes, File file, Uri uri) {
+        if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try(OutputStream outputStream = getContentResolver().openOutputStream(uri)) {
                 outputStream.write(bytes);
-                outputStream.close();
             }
-            else {
-                try{
-                    FileOutputStream fos = new FileOutputStream(file);
-                    fos.write(bytes);
-                    fos.close();
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
+            catch (IOException e) {
+                e.printStackTrace();
             }
-        } catch (IOException e) {
-            e.printStackTrace();
         }
-        finally {
-            mImage.close();
+        else {
+            try(FileOutputStream fos = new FileOutputStream(file)){
+                fos.write(bytes);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
         }
     }
 
@@ -384,7 +373,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 outputs.add(new OutputConfiguration(surfaceList.get(1)));
                 SessionConfiguration sessionConfiguration = new SessionConfiguration(SessionConfiguration.SESSION_REGULAR,
                         outputs,
-                        getMainExecutor(),
+                        bgExecutor,
                         stateCallback);
 
                 try {
