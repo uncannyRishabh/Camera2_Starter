@@ -112,8 +112,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        mHandler = new Handler(getMainLooper());
-
         capture = findViewById(R.id.capture);
         thumbPreview = findViewById(R.id.thumbnail);
         previewView = findViewById(R.id.preview);
@@ -329,7 +327,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                         File file = new File(path);
 
                         ContentValues values = new ContentValues();
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) values.put(MediaStore.MediaColumns.RELATIVE_PATH, "DCIM/Camera/");
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) values.put(MediaStore.Images.ImageColumns.RELATIVE_PATH, "DCIM/Camera/");
                         values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpg");
                         values.put(MediaStore.Images.ImageColumns.TITLE, title);
                         values.put(MediaStore.Images.ImageColumns.DISPLAY_NAME, displayName);
@@ -442,12 +440,13 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     }
 
     protected void startBackgroundThread() {
-        mBackgroundThread = new HandlerThread("Camera Background");
+        mBackgroundThread = new HandlerThread("Camera Main");
         bBackgroundThread = new HandlerThread("Camera Background");
         mBackgroundThread.start();
         bBackgroundThread.start();
         cameraHandler = new Handler(mBackgroundThread.getLooper());
-        mHandler = new Handler(mBackgroundThread.getLooper());
+//        mHandler = new Handler(mBackgroundThread.getLooper());
+        mHandler = new Handler(getMainLooper());
     }
 
     protected void stopBackgroundThread() {
