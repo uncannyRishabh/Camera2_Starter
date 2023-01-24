@@ -275,7 +275,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 }
                 else{
                     cameraDevice.createCaptureSession(Arrays.asList(previewSurface, recordSurface, imageReader.getSurface())
-                            ,streamlineCaptureSessionCallback,null);
+                            ,streamlineCaptureSessionCallback,bHandler);
                 }
             }
             else{
