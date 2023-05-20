@@ -517,6 +517,8 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 pauseResume.setVisibility(isVRecording ? View.INVISIBLE : View.VISIBLE);
                 chronometer.setVisibility(isVRecording ? View.INVISIBLE : View.VISIBLE);
                 thumbPreview.setImageDrawable(isVRecording ? null : ContextCompat.getDrawable(this,R.drawable.ic_capture_btn));
+                capture.setColorFilter(isVRecording ? ContextCompat.getColor(this,R.color.white) :
+                        ContextCompat.getColor(this,R.color.red));
             });
             isVRecording = !isVRecording;
         }
