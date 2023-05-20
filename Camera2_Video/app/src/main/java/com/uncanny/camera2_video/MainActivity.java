@@ -14,6 +14,7 @@ import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.params.OutputConfiguration;
 import android.hardware.camera2.params.SessionConfiguration;
+import android.location.Location;
 import android.media.CamcorderProfile;
 import android.media.ImageReader;
 import android.media.MediaActionSound;
@@ -33,6 +34,7 @@ import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
 import android.widget.Chronometer;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
@@ -41,6 +43,8 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
+import com.google.android.gms.location.FusedLocationProviderClient;
+import com.google.android.gms.location.LocationServices;
 import com.google.android.material.imageview.ShapeableImageView;
 
 import java.io.File;
@@ -57,10 +61,11 @@ import io.reactivex.rxjava3.schedulers.Schedulers;
 
 @SuppressWarnings({"FieldMayBeFinal", "FieldCanBeLocal"})
 public class MainActivity extends AppCompatActivity implements View.OnClickListener {
-    private final String TAG ="MainActivity";
+    private final String TAG = "MainActivity";
     private static final int REQUEST_CAMERA_PERMISSION = 2002;
 
     private static final SparseIntArray ORIENTATIONS = new SparseIntArray();
+
     static {
         ORIENTATIONS.append(Surface.ROTATION_0, 90);
         ORIENTATIONS.append(Surface.ROTATION_90, 0);
@@ -68,13 +73,18 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         ORIENTATIONS.append(Surface.ROTATION_270, 180);
     }
 
+    private static final String CAMERA_MAIN_BACK = "0";
+    private static final String CAMERA_ULTRA_WIDE_BACK = "21";
+    private String cameraId;
+
     private Chronometer chronometer;
     private ShapeableImageView capture;
     private ShapeableImageView pauseResume;
     private ShapeableImageView thumbPreview;
     private AutoFitPreviewView previewView;
+    private TextView auxSwitcher;
 
-    private Surface recordSurface,previewSurface,persistentSurface;
+    private Surface recordSurface, previewSurface, persistentSurface;
     private SurfaceTexture stPreview;
 
     private CameraDevice cameraDevice;
@@ -86,6 +96,9 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private ImageReader imageReader;
     private MediaRecorder mMediaRecorder;
     private CamcorderProfile camcorderProfile = CamcorderProfile.get(CamcorderProfile.QUALITY_1080P);
+
+    private Location currentLocation;
+    private FusedLocationProviderClient fusedLocationClient;
 
     private MediaActionSound sound = new MediaActionSound();
 
@@ -100,41 +113,66 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private boolean isVRecording = false;
     private Uri fileUri;
 
+    public String getCameraId() {
+        return cameraId;
+    }
+
+    public void setCameraId(String cameraId) {
+        this.cameraId = cameraId;
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+
+        //FIXME : Handle permission getting revoked after sometime.
+        requestPermissions();
+
+        setCameraId(CAMERA_MAIN_BACK);
 
         capture = findViewById(R.id.capture);
         pauseResume = findViewById(R.id.pause_resume);
         thumbPreview = findViewById(R.id.thumbnail_snapshot);
         previewView = findViewById(R.id.preview);
         chronometer = findViewById(R.id.chronometer);
+        auxSwitcher = findViewById(R.id.aux_switcher);
 
         capture.setOnClickListener(this);
         pauseResume.setOnClickListener(this);
         thumbPreview.setOnClickListener(this);
+        auxSwitcher.setOnClickListener(this);
 
-        requestPermissions();
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+            fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
+            Log.e(TAG, "onCreate: location permission granted");
+            fusedLocationClient.getLastLocation().addOnSuccessListener(this, location -> {
+                currentLocation = location;
+                Log.e(TAG, "onCreate: curr location : "+location);
+            });
+        }
     }
 
     private void requestPermissions() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED ||
                 ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED ||
                 ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this,new String[]{Manifest.permission.CAMERA
-                    , Manifest.permission.RECORD_AUDIO, Manifest.permission.WRITE_EXTERNAL_STORAGE},REQUEST_CAMERA_PERMISSION);
+            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CAMERA
+                    , Manifest.permission.RECORD_AUDIO, Manifest.permission.WRITE_EXTERNAL_STORAGE
+                    , Manifest.permission.ACCESS_FINE_LOCATION}, REQUEST_CAMERA_PERMISSION);
         }
     }
 
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if(requestCode == REQUEST_CAMERA_PERMISSION) {
-            for(int i=0; i<permissions.length-1;i++){
-                Log.e(TAG, "onRequestPermissionsResult: permissions : "+ Arrays.toString(permissions) +" results : "+ Arrays.toString(grantResults));
-                if(grantResults[i] != PackageManager.PERMISSION_GRANTED) {
+        if (requestCode == REQUEST_CAMERA_PERMISSION) {
+            for (int i = 0; i < permissions.length - 2; i++) {
+                Log.e(TAG, "onRequestPermissionsResult: permissions : " + Arrays.toString(permissions) + " results : " + Arrays.toString(grantResults));
+                if (grantResults[i] != PackageManager.PERMISSION_GRANTED) {
                     Toast.makeText(this, "Grant Permission to continue", Toast.LENGTH_SHORT).show();
+                    //FIXME : Instead of finishAffinity display permission rationale
                     finishAffinity();
                 }
             }
@@ -167,15 +205,15 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         }
     };
 
-    private void openCamera(){
-        if(!resumed || !hasSurface) return;
+    private void openCamera() {
+        if (!resumed || !hasSurface) return;
 
         try {
             cameraManager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
-            cameraCharacteristics = cameraManager.getCameraCharacteristics("0");
+            cameraCharacteristics = cameraManager.getCameraCharacteristics(getCameraId());
 
             previewView.measure(1920, 1080);
-            previewView.setAspectRatio(1080,1920);
+            previewView.setAspectRatio(1080, 1920);
             stPreview.setDefaultBufferSize(1920, 1080);
 
             //set capture resolution
@@ -188,22 +226,22 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                         ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                     requestPermissions();
                 }
-                cameraManager.openCamera("0", cameraDeviceStateCallback, bHandler);
-            } catch(CameraAccessException e) {
+                cameraManager.openCamera(getCameraId(), cameraDeviceStateCallback, bHandler);
+            } catch (CameraAccessException e) {
                 Log.e(TAG, "openCamera: open failed: " + e.getMessage());
             }
-        }
-        catch (CameraAccessException e){
+        } catch (CameraAccessException e) {
             e.printStackTrace();
         }
     }
 
-    private void prepareMediaRecorder(){
+    private void prepareMediaRecorder() {
         String mVideoLocation = "//storage//emulated//0//DCIM//Camera//";
         String mVideoSuffix = "Camera2_Video_" + System.currentTimeMillis() + ".mp4";
 
-        if(resumed)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) mMediaRecorder = new MediaRecorder(this);
+        if (resumed)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+                mMediaRecorder = new MediaRecorder(this);
             else mMediaRecorder = new MediaRecorder();
         mMediaRecorder.setOrientationHint(getJpegOrientation());
         mMediaRecorder.setAudioSource(MediaRecorder.AudioSource.DEFAULT);
@@ -217,14 +255,18 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         mMediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
         mMediaRecorder.setVideoEncoder(MediaRecorder.VideoEncoder.HEVC);
         mMediaRecorder.setVideoEncodingBitRate(camcorderProfile.videoBitRate);
-        mMediaRecorder.setVideoSize(1920,1080);
+        mMediaRecorder.setVideoSize(1920, 1080);
+
+        if(null != currentLocation){
+            mMediaRecorder.setLocation((float) currentLocation.getLatitude(), (float) currentLocation.getLongitude());
+        }
 
         shouldDeleteEmptyFile = true;
-        videoFile = new File(mVideoLocation+mVideoSuffix);
+        videoFile = new File(mVideoLocation + mVideoSuffix);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             mMediaRecorder.setOutputFile(videoFile);
         } else {
-            mMediaRecorder.setOutputFile(mVideoLocation+mVideoSuffix);
+            mMediaRecorder.setOutputFile(mVideoLocation + mVideoSuffix);
         }
 
         try {
@@ -324,6 +366,8 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 if(isVRecording){
                     Log.e(TAG, "onConfigured: Preparing media Recorder");
                 }
+                auxSwitcher.setClickable(true);
+                capture.setClickable(true);
             } catch (CameraAccessException e) {
                 e.printStackTrace();
             }
@@ -346,6 +390,15 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             captureRequestBuilder.set(CaptureRequest.JPEG_QUALITY,(byte) 100);
             captureRequestBuilder.set(CaptureRequest.JPEG_ORIENTATION,getJpegOrientation());
             captureRequestBuilder.addTarget(imageReader.getSurface());
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                fusedLocationClient.getLastLocation().addOnSuccessListener(this, location -> {
+                    currentLocation = location;
+                });
+                if(null!=currentLocation){
+                    Log.e(TAG, "captureImage: location : "+ currentLocation);
+                    captureRequestBuilder.set(CaptureRequest.JPEG_GPS_LOCATION,currentLocation);
+                }
+            }
 
             cameraCaptureSession.capture(captureRequestBuilder.build(), null, bHandler);
         } catch (CameraAccessException e) {
@@ -368,7 +421,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     ImageReader.OnImageAvailableListener snapshotImageCallback = imageReader -> {
         Log.e(TAG, "onImageAvailable: received snapshot image data");
         Completable.fromRunnable(new ImageSaverThread(this,
-                        imageReader.acquireLatestImage(), "0", getContentResolver()))
+                        imageReader.acquireLatestImage(), getCameraId(), getContentResolver()))
                 .subscribeOn(Schedulers.computation())
                 .subscribe(new CompletableObserver() {
                     @Override
@@ -519,6 +572,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 thumbPreview.setImageDrawable(isVRecording ? null : ContextCompat.getDrawable(this,R.drawable.ic_capture_btn));
                 capture.setColorFilter(isVRecording ? ContextCompat.getColor(this,R.color.white) :
                         ContextCompat.getColor(this,R.color.red));
+                auxSwitcher.setVisibility(isVRecording ? View.VISIBLE : View.INVISIBLE);
             });
             isVRecording = !isVRecording;
         }
@@ -557,6 +611,20 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 pauseResume.setImageDrawable(ContextCompat.getDrawable(this, R.drawable.ic_round_play_arrow_24));
             }
             paused = !paused;
+        }
+        else if (id == R.id.aux_switcher){
+            closeCamera();
+            auxSwitcher.setClickable(false);
+            capture.setClickable(false);
+            if(getCameraId().equals(CAMERA_MAIN_BACK)){
+                setCameraId(CAMERA_ULTRA_WIDE_BACK);
+                auxSwitcher.setText(getString(R.string.wide));
+            }
+            else {
+                setCameraId(CAMERA_MAIN_BACK);
+                auxSwitcher.setText(getString(R.string.normal));
+            }
+            openCamera();
         }
     }
 

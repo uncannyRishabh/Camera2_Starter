@@ -35,6 +35,23 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
+    <TextView
+        android:id="@+id/aux_switcher"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        app:layout_constraintBottom_toTopOf="@id/capture"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:layout_marginBottom="36dp"
+        android:paddingVertical="6dp"
+        android:paddingHorizontal="12dp"
+        android:clickable="true"
+        android:focusable="true"
+        android:text="@string/normal"
+        android:textColor="@color/dk_gray"
+        android:background="@drawable/rounded_white"
+        />
+
     <com.google.android.material.imageview.ShapeableImageView
         android:id="@+id/capture"
         android:layout_width="92dp"

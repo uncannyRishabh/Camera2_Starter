@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">Camera2_Video</string>
+    <string name="wide">👨‍👩‍👧‍👦 WIDE</string>
+    <string name="normal">👨‍👦 Normal</string>
 </resources>
