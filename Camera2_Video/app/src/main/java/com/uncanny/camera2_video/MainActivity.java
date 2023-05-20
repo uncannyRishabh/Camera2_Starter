@@ -1,11 +1,5 @@
 package com.uncanny.camera2_video;
 
-import androidx.annotation.NonNull;
-import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
-import androidx.core.os.HandlerCompat;
-
 import android.Manifest;
 import android.content.Context;
 import android.content.Intent;
@@ -41,12 +35,17 @@ import android.view.View;
 import android.widget.Chronometer;
 import android.widget.Toast;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.WorkerThread;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+
 import com.google.android.material.imageview.ShapeableImageView;
 
 import java.io.File;
 import java.io.IOException;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 
@@ -91,8 +90,8 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private MediaActionSound sound = new MediaActionSound();
 
     private Handler cameraHandler;
-    private Handler mHandler = new Handler();
-    private HandlerThread mBackgroundThread;
+    private Handler bHandler;
+    private HandlerThread mBackgroundThread, bBackgroundThread;
     private Executor bgExecutor = Executors.newCachedThreadPool();
 
     private File videoFile;
@@ -189,7 +188,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                         ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                     requestPermissions();
                 }
-                cameraManager.openCamera("0", cameraDeviceStateCallback, cameraHandler);
+                cameraManager.openCamera("0", cameraDeviceStateCallback, bHandler);
             } catch(CameraAccessException e) {
                 Log.e(TAG, "openCamera: open failed: " + e.getMessage());
             }
@@ -239,7 +238,9 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private OutputConfiguration recordConfiguration;
     private OutputConfiguration snapshotConfiguration;
 
-    private void createVideoPreview()  {
+    private SessionConfiguration sessionConfiguration;
+
+    private void createVideoPreview() {
         if(!resumed || !hasSurface) return;
 
         try {
@@ -251,31 +252,61 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 //            recordSurface = persistentSurface; // TODO: PersistentSurface not recording video in some devices
             recordSurface = mMediaRecorder.getSurface();
 
-            previewCaptureRequestBuilder.addTarget(recordSurface);
+            if(isVRecording){
+                previewCaptureRequestBuilder.addTarget(previewSurface);
 
-            previewCaptureRequestBuilder.addTarget(previewSurface);
+                previewCaptureRequestBuilder.addTarget(recordSurface);
 
-            previewCaptureRequestBuilder.set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE
-                    ,CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON);
+                previewCaptureRequestBuilder.set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE
+                        ,CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON);
 
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                OutputConfiguration previewConfiguration  = new OutputConfiguration(previewSurface);
-                OutputConfiguration recordConfiguration   = new OutputConfiguration(recordSurface);
-                OutputConfiguration snapshotConfiguration = new OutputConfiguration(imageReader.getSurface());
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                    recordConfiguration   = new OutputConfiguration(recordSurface);
+                    snapshotConfiguration = new OutputConfiguration(imageReader.getSurface());
 
 //                previewConfiguration.enableSurfaceSharing();
 
-                SessionConfiguration sessionConfiguration = new SessionConfiguration(SessionConfiguration.SESSION_REGULAR
-                        , Arrays.asList(previewConfiguration,recordConfiguration,snapshotConfiguration)
-                        , bgExecutor
-                        , streamlineCaptureSessionCallback);
+                    sessionConfiguration = new SessionConfiguration(SessionConfiguration.SESSION_REGULAR
+                            , Arrays.asList(previewConfiguration,recordConfiguration,snapshotConfiguration)
+                            , bgExecutor
+                            , streamlineCaptureSessionCallback);
 
-                cameraDevice.createCaptureSession(sessionConfiguration);
+                    cameraDevice.createCaptureSession(sessionConfiguration);
+                }
+                else{
+                    cameraDevice.createCaptureSession(Arrays.asList(previewSurface, recordSurface, imageReader.getSurface())
+                            ,streamlineCaptureSessionCallback,bHandler);
+                }
             }
             else{
-                cameraDevice.createCaptureSession(Arrays.asList(previewSurface, recordSurface, imageReader.getSurface())
-                        ,streamlineCaptureSessionCallback,null);
+                previewCaptureRequestBuilder.addTarget(recordSurface);
+
+                previewCaptureRequestBuilder.addTarget(previewSurface);
+
+                previewCaptureRequestBuilder.set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE
+                        ,CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON);
+
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                    previewConfiguration  = new OutputConfiguration(previewSurface);
+                    recordConfiguration   = new OutputConfiguration(recordSurface);
+                    snapshotConfiguration = new OutputConfiguration(imageReader.getSurface());
+
+//                previewConfiguration.enableSurfaceSharing();
+
+                    sessionConfiguration = new SessionConfiguration(SessionConfiguration.SESSION_REGULAR
+                            , Arrays.asList(previewConfiguration,recordConfiguration,snapshotConfiguration)
+                            , bgExecutor
+                            , streamlineCaptureSessionCallback);
+
+                    cameraDevice.createCaptureSession(sessionConfiguration);
+                }
+                else{
+                    cameraDevice.createCaptureSession(Arrays.asList(previewSurface, recordSurface, imageReader.getSurface())
+                            ,streamlineCaptureSessionCallback,bHandler);
+                }
             }
+
+
 
         }
         catch (CameraAccessException e) {
@@ -289,7 +320,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         public void onConfigured(@NonNull CameraCaptureSession session) {
             cameraCaptureSession = session;
             try {
-                cameraCaptureSession.setRepeatingRequest(previewCaptureRequestBuilder.build(), null,mHandler);
+                cameraCaptureSession.setRepeatingRequest(previewCaptureRequestBuilder.build(), null,bHandler);
                 if(isVRecording){
                     Log.e(TAG, "onConfigured: Preparing media Recorder");
                 }
@@ -316,7 +347,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             captureRequestBuilder.set(CaptureRequest.JPEG_ORIENTATION,getJpegOrientation());
             captureRequestBuilder.addTarget(imageReader.getSurface());
 
-            cameraCaptureSession.capture(captureRequestBuilder.build(), null, mHandler);
+            cameraCaptureSession.capture(captureRequestBuilder.build(), null, bHandler);
         } catch (CameraAccessException e) {
             e.printStackTrace();
         }
@@ -364,7 +395,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             cameraDevice = camera;
             if(resumed) {
                 Log.e(TAG, "onOpened: SURFACE ABANDONED");
-                persistentSurface = MediaCodec.createPersistentInputSurface();
+//                persistentSurface = MediaCodec.createPersistentInputSurface();
                 mMediaRecorder = null;
             }
             createVideoPreview();
@@ -382,6 +413,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         }
     };
 
+    @WorkerThread
     private void displayLatestThumbnail() {
         LatestThumbnailGeneratorThread ltg;
         Completable.fromRunnable(ltg = new LatestThumbnailGeneratorThread(this))
@@ -393,6 +425,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 })).subscribe();
     }
 
+    @WorkerThread
     private void performMediaScan(String filename, String type){
         String mimeType = null;
         if(type.equals("image")) mimeType = "image/jpeg";
@@ -428,21 +461,28 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     }
 
     protected void startBackgroundThread() {
-        mBackgroundThread = new HandlerThread("Camera Background");
+        mBackgroundThread = new HandlerThread("Camera Main");
+        bBackgroundThread = new HandlerThread("Camera Background");
         mBackgroundThread.start();
-        cameraHandler = HandlerCompat.createAsync(mBackgroundThread.getLooper());
+        bBackgroundThread.start();
+        cameraHandler = new Handler(mBackgroundThread.getLooper());
+        bHandler = new Handler(bBackgroundThread.getLooper());
     }
 
     protected void stopBackgroundThread() {
         if(mBackgroundThread!=null) mBackgroundThread.quitSafely();
+        if(bBackgroundThread!=null) bBackgroundThread.quitSafely();
         else{
             finishAffinity();
             return;
         }
         try {
             mBackgroundThread.join();
+            bBackgroundThread.join();
             cameraHandler = null;
+            bHandler = null;
             mBackgroundThread = null;
+            bBackgroundThread = null;
             cameraManager = null;
         } catch (InterruptedException e) {
             e.printStackTrace();
@@ -477,6 +517,8 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 pauseResume.setVisibility(isVRecording ? View.INVISIBLE : View.VISIBLE);
                 chronometer.setVisibility(isVRecording ? View.INVISIBLE : View.VISIBLE);
                 thumbPreview.setImageDrawable(isVRecording ? null : ContextCompat.getDrawable(this,R.drawable.ic_capture_btn));
+                capture.setColorFilter(isVRecording ? ContextCompat.getColor(this,R.color.white) :
+                        ContextCompat.getColor(this,R.color.red));
             });
             isVRecording = !isVRecording;
         }
