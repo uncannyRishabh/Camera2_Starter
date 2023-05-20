@@ -18,7 +18,6 @@ import android.location.Location;
 import android.media.CamcorderProfile;
 import android.media.ImageReader;
 import android.media.MediaActionSound;
-import android.media.MediaCodec;
 import android.media.MediaRecorder;
 import android.media.MediaScannerConnection;
 import android.net.Uri;
@@ -26,6 +25,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.StrictMode;
 import android.os.SystemClock;
 import android.provider.MediaStore;
 import android.util.Log;
@@ -126,6 +126,13 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
+        //Find Memory leaks
+        if(BuildConfig.DEBUG){
+            StrictMode.setVmPolicy(new StrictMode.VmPolicy.Builder(StrictMode.getVmPolicy())
+                    .detectLeakedClosableObjects()
+                    .build());
+        }
+
         //FIXME : Handle permission getting revoked after sometime.
         requestPermissions();
 
@@ -221,7 +228,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             imageReader.setOnImageAvailableListener(snapshotImageCallback, cameraHandler);
 
             try {
-                persistentSurface = MediaCodec.createPersistentInputSurface();
+//                persistentSurface = MediaCodec.createPersistentInputSurface();
                 if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED ||
                         ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                     requestPermissions();
@@ -257,8 +264,11 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         mMediaRecorder.setVideoEncodingBitRate(camcorderProfile.videoBitRate);
         mMediaRecorder.setVideoSize(1920, 1080);
 
-        if(null != currentLocation){
-            mMediaRecorder.setLocation((float) currentLocation.getLatitude(), (float) currentLocation.getLongitude());
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+            if(null != currentLocation){
+                fusedLocationClient.getLastLocation().addOnSuccessListener(this, location -> currentLocation = location);
+                mMediaRecorder.setLocation((float) currentLocation.getLatitude(), (float) currentLocation.getLongitude());
+            }
         }
 
         shouldDeleteEmptyFile = true;
@@ -366,8 +376,10 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 if(isVRecording){
                     Log.e(TAG, "onConfigured: Preparing media Recorder");
                 }
-                auxSwitcher.setClickable(true);
-                capture.setClickable(true);
+                runOnUiThread(() -> {
+                    auxSwitcher.setClickable(true);
+                    capture.setClickable(true);
+                });
             } catch (CameraAccessException e) {
                 e.printStackTrace();
             }
@@ -391,9 +403,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             captureRequestBuilder.set(CaptureRequest.JPEG_ORIENTATION,getJpegOrientation());
             captureRequestBuilder.addTarget(imageReader.getSurface());
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-                fusedLocationClient.getLastLocation().addOnSuccessListener(this, location -> {
-                    currentLocation = location;
-                });
+                fusedLocationClient.getLastLocation().addOnSuccessListener(this, location -> currentLocation = location);
                 if(null!=currentLocation){
                     Log.e(TAG, "captureImage: location : "+ currentLocation);
                     captureRequestBuilder.set(CaptureRequest.JPEG_GPS_LOCATION,currentLocation);
@@ -414,6 +424,14 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         if (null != imageReader) {
             imageReader.close();
             imageReader = null;
+        }
+        if(null != previewSurface){
+            previewSurface.release();
+            previewSurface = null;
+        }
+        if(null != mMediaRecorder){
+            mMediaRecorder.release();
+            mMediaRecorder = null;
         }
     }
 
@@ -656,7 +674,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         performFileCleanup();
         stopBackgroundThread();
         if(mMediaRecorder != null) mMediaRecorder.release();
-        persistentSurface.release();
+//        persistentSurface.release();
     }
 
     @Override
@@ -666,6 +684,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         performFileCleanup();
         stopBackgroundThread();
         if(mMediaRecorder != null) mMediaRecorder.release();
-        persistentSurface.release();
+//        persistentSurface.release();
     }
 }
